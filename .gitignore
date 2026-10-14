@@ -1,0 +1,10 @@
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.vercel/
+.env*
+!.env.example
+
+# Generado por scripts/fetch-assets.mjs en cada compilación
+public/data/
