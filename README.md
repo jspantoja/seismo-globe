@@ -33,6 +33,13 @@ npm run build        # compilación de producción (incluye el paso prebuild)
 que necesita el globo, verificados contra un SHA-256 fijo. Si algo no se puede descargar, no
 rompe la compilación: la app pide ese archivo a una CDN pública.
 
+## Enlaces compartibles
+
+La dirección de la página refleja la vista, así que copiar el enlace comparte lo que se ve:
+`?periodo=week&mag=4.5&pais=170&lista=1` (`placa=SA` en lugar de `pais=` para una placa;
+`sgc=1` y `emsc=1` activan esas fuentes). `?sismo=<id>` abre el detalle de un sismo. Todo lo que
+llega por la dirección se valida (`lib/urlState.ts`) y lo inesperado se ignora.
+
 ## Despliegue
 
 Cada push a `main` se compila y se publica en Vercel. GitHub Actions (`.github/workflows/ci.yml`)

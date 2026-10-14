@@ -13,7 +13,17 @@ function magColor(mag: number | null): string {
   return '#c53030';
 }
 
-export default function QuakeModal({ quake, onClose }: { quake: QuakeFeature; onClose: () => void }) {
+export default function QuakeModal({
+  quake,
+  onClose,
+  onCopyLink,
+  linkCopied,
+}: {
+  quake: QuakeFeature;
+  onClose: () => void;
+  onCopyLink?: () => void;
+  linkCopied?: boolean;
+}) {
   const isSgc = quake.source === 'SGC';
   const isEmsc = quake.source === 'EMSC';
   const isCatalog = quake.source === 'EMSC-CAT';
@@ -195,6 +205,12 @@ export default function QuakeModal({ quake, onClose }: { quake: QuakeFeature; on
               </>
             )}
           </div>
+        )}
+
+        {onCopyLink && (
+          <button className="btn modal__share" onClick={onCopyLink}>
+            {linkCopied ? '✓ Enlace copiado' : '🔗 Copiar enlace a este sismo'}
+          </button>
         )}
       </div>
     </div>

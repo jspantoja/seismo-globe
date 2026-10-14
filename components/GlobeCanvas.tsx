@@ -48,6 +48,7 @@ interface Props {
   selectedPlate: any | null; // PB2002 feature, geometry already winding-normalized
   flyTo: FlyTo | null;
   onZoomChange: (pov: Pov) => void;
+  onReady?: () => void; // the globe is initialised and the camera can be moved
 }
 
 export default function GlobeCanvas({
@@ -63,8 +64,18 @@ export default function GlobeCanvas({
   selectedPlate,
   flyTo,
   onZoomChange,
+  onReady,
 }: Props) {
   const globeRef = useRef<any>(null);
+  // The globe is loaded lazily: a camera flight requested before it exists
+  // (e.g. a country taken from a shared link) is applied as soon as it does.
+  const [globeReady, setGlobeReady] = useState(false);
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+  const handleGlobeReady = useCallback(() => {
+    setGlobeReady(true);
+    onReadyRef.current?.();
+  }, []);
 
   // Probe the local texture once; if it is missing or broken, switch to the CDN.
   const [textureUrl, setTextureUrl] = useState(EARTH_TEXTURE_LOCAL);
@@ -147,14 +158,15 @@ export default function GlobeCanvas({
   }, []);
 
   useEffect(() => {
-    if (flyTo && globeRef.current) {
+    if (flyTo && globeReady && globeRef.current) {
       globeRef.current.pointOfView({ lat: flyTo.lat, lng: flyTo.lng, altitude: flyTo.altitude }, 1200);
     }
-  }, [flyTo]);
+  }, [flyTo, globeReady]);
 
   return (
     <Globe
       ref={globeRef}
+      onGlobeReady={handleGlobeReady}
       globeImageUrl={textureUrl}
       backgroundColor="rgba(0,0,0,0)"
       atmosphereColor="#4fd1c5"

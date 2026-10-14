@@ -478,3 +478,76 @@ html, body {
   cursor: pointer;
 }
 .toast__locate:hover { background: rgba(255, 255, 255, 0.14); }
+
+/* ---------- quake list drawer ---------- */
+.quake-list {
+  position: absolute;
+  top: 74px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 27;
+  width: min(380px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  overflow: hidden;
+}
+.quake-list__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.quake-list .seg { align-self: flex-start; flex-wrap: wrap; }
+.quake-list__search {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 7px 10px;
+}
+.quake-list__search::placeholder { color: var(--text-dim); }
+.quake-list__search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.quake-list__count { font-size: 11.5px; color: var(--text-dim); }
+.quake-list__rows { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; overscroll-behavior: contain; }
+.quake-list__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 6px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--panel-border);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.quake-list__row:hover { background: rgba(255, 255, 255, 0.05); }
+.quake-list__row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.quake-list__mag {
+  flex: 0 0 auto;
+  min-width: 42px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 13.5px;
+  padding: 5px 0;
+  border-radius: 8px;
+}
+.quake-list__main { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.quake-list__place { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quake-list__meta { font-size: 11.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quake-list__more, .quake-list__share { width: 100%; text-align: center; border: 1px solid var(--panel-border); }
+
+@media (max-width: 720px) {
+  .quake-list {
+    top: auto;
+    right: 0;
+    left: 0;
+    bottom: 0;
+    width: auto;
+    height: 74dvh;
+    border-radius: 16px 16px 0 0;
+  }
+}
+
+.modal__share { width: 100%; margin-top: 12px; text-align: center; border: 1px solid var(--panel-border); }

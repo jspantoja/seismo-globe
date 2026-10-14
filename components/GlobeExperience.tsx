@@ -34,6 +34,8 @@ import { fetchJsonFirst } from '@/lib/assets';
 import { loadLastQuakes, saveLastQuakes } from '@/lib/localCache';
 import { formatRelative } from '@/lib/format';
 import SourcesModal from './SourcesModal';
+import QuakeList from './QuakeList';
+import { parseUrlState, buildSearch, periodCovering, minMagFor } from '@/lib/urlState';
 import type { BoundaryPath, EarthquakesResponse, QuakeFeature } from '@/lib/types';
 
 // Each layer is loaded from the app's own copy first (scripts/fetch-assets.mjs
@@ -112,6 +114,19 @@ export default function GlobeExperience() {
   const [emscEnabled, setEmscEnabled] = useState(false);
 
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [linkNotice, setLinkNotice] = useState<string | null>(null);
+  // The page address is read once, after mount (not in the initial state, so the
+  // server-rendered HTML and the first client render stay identical). Nothing is
+  // fetched, and nothing is written back to the address, until that has happened.
+  const [urlReady, setUrlReady] = useState(false);
+  const [globeReady, setGlobeReady] = useState(false);
+  const pendingUrlRef = useRef<{ country: string | null; plate: string | null; quake: string | null }>({
+    country: null,
+    plate: null,
+    quake: null,
+  });
 
   const [selectedQuake, setSelectedQuake] = useState<QuakeFeature | null>(null);
   const [toastQuake, setToastQuake] = useState<QuakeFeature | null>(null);
@@ -139,6 +154,11 @@ export default function GlobeExperience() {
   const knownIds = useRef<Set<string>>(new Set());
   const firstLoadUsgs = useRef(true);
   const firstLoadSgc = useRef(true);
+  // Identifies the period/magnitude a source is currently being polled for, so a
+  // slow response for a previous selection never overwrites a newer one.
+  const usgsKeyRef = useRef('');
+  const sgcKeyRef = useRef('');
+  const emscKeyRef = useRef('');
   const alertSettingsRef = useRef(alertSettings);
   const countryBboxesRef = useRef<CountryBbox[]>([]);
   const selectedCountryIdRef = useRef<string | null>(null);
@@ -262,12 +282,14 @@ export default function GlobeExperience() {
         const res = await fetch(`/api/earthquakes?period=${p}&minmag=${mag}`, { cache: 'no-store' });
         const json = await res.json();
         if (!res.ok) throw new Error(json?.message ?? 'Error al obtener sismos del USGS');
+        if (usgsKeyRef.current !== `${p}_${mag}`) return; // the selection changed while this was in flight
         const data = json as EarthquakesResponse;
         handleNewQuakes(data.quakes, firstLoadUsgs.current);
         firstLoadUsgs.current = false;
         setUsgs({ data, error: null, loading: false });
         saveLastQuakes(p, mag, data);
       } catch (err) {
+        if (usgsKeyRef.current !== `${p}_${mag}`) return;
         setUsgs((prev) => ({ ...prev, error: err instanceof Error ? err.message : 'Error desconocido', loading: false }));
       }
     },
@@ -280,11 +302,13 @@ export default function GlobeExperience() {
         const res = await fetch(`/api/earthquakes/sgc?period=${p}&minmag=${mag}`, { cache: 'no-store' });
         const json = await res.json();
         if (!res.ok) throw new Error(json?.message ?? 'Error al obtener sismos del SGC');
+        if (sgcKeyRef.current !== `${p}_${mag}`) return;
         const data = json as EarthquakesResponse;
         handleNewQuakes(data.quakes, firstLoadSgc.current);
         firstLoadSgc.current = false;
         setSgc({ data, error: null, loading: false });
       } catch (err) {
+        if (sgcKeyRef.current !== `${p}_${mag}`) return;
         setSgc((prev) => ({ ...prev, error: err instanceof Error ? err.message : 'Error desconocido', loading: false }));
       }
     },
@@ -298,56 +322,109 @@ export default function GlobeExperience() {
       const res = await fetch(`/api/earthquakes/emsc?period=${p}&minmag=${mag}`, { cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.message ?? 'Error al obtener reportes ciudadanos del EMSC');
+      if (emscKeyRef.current !== `${p}_${mag}`) return;
       setEmsc({ data: json as EarthquakesResponse, error: null, loading: false });
     } catch (err) {
+      if (emscKeyRef.current !== `${p}_${mag}`) return;
       setEmsc((prev) => ({ ...prev, error: err instanceof Error ? err.message : 'Error desconocido', loading: false }));
     }
   }, []);
 
-  // Open with the last live data this browser saw (clearly labelled as saved)
-  // while the first live request is in flight, or if it never succeeds.
+  // Once, after mount: take the shareable state from the page address, then
+  // open with the last live data this browser saw for that selection (clearly
+  // labelled as saved) while the first live request is in flight, or if it
+  // never succeeds.
   useEffect(() => {
-    const saved = loadLastQuakes('day', 0);
-    if (!saved) return;
-    setUsgs((prev) =>
-      prev.data
-        ? prev
-        : {
-            data: {
-              ...saved.data,
-              stale: true,
-              staleReason: 'Datos guardados en este navegador; reconectando con el USGS…',
-            },
-            error: null,
-            loading: true,
-          }
-    );
+    const url = parseUrlState(window.location.search);
+    if (url.period) setPeriod(url.period);
+    if (url.minMag !== null) setMinMag(url.minMag);
+    if (url.sgc) setSgcEnabled(true);
+    if (url.emsc) setEmscEnabled(true);
+    if (url.list) setListOpen(true);
+    pendingUrlRef.current = { country: url.country, plate: url.plate, quake: url.quake };
+
+    const saved = loadLastQuakes(url.period ?? 'day', url.minMag ?? 0);
+    if (saved) {
+      setUsgs((prev) =>
+        prev.data
+          ? prev
+          : {
+              data: {
+                ...saved.data,
+                stale: true,
+                staleReason: 'Datos guardados en este navegador; reconectando con el USGS…',
+              },
+              error: null,
+              loading: true,
+            }
+      );
+    }
+    setUrlReady(true);
   }, []);
 
   useEffect(() => {
+    if (!urlReady) return;
+    usgsKeyRef.current = `${period}_${minMag}`;
     setUsgs((prev) => ({ ...prev, loading: true }));
     firstLoadUsgs.current = true;
     fetchUsgs(period, minMag);
     const id = setInterval(() => fetchUsgs(period, minMag), POLL_MS);
     return () => clearInterval(id);
-  }, [period, minMag, fetchUsgs]);
+  }, [urlReady, period, minMag, fetchUsgs]);
 
   useEffect(() => {
-    if (!sgcEnabled) return;
+    if (!urlReady || !sgcEnabled) return;
+    sgcKeyRef.current = `${period}_${minMag}`;
     setSgc((prev) => ({ ...prev, loading: true }));
     firstLoadSgc.current = true;
     fetchSgc(period, minMag);
     const id = setInterval(() => fetchSgc(period, minMag), POLL_MS);
     return () => clearInterval(id);
-  }, [sgcEnabled, period, minMag, fetchSgc]);
+  }, [urlReady, sgcEnabled, period, minMag, fetchSgc]);
 
   useEffect(() => {
-    if (!emscEnabled) return;
+    if (!urlReady || !emscEnabled) return;
+    emscKeyRef.current = `${period}_${minMag}`;
     setEmsc((prev) => ({ ...prev, loading: true }));
     fetchEmsc(period, minMag);
     const id = setInterval(() => fetchEmsc(period, minMag), POLL_MS);
     return () => clearInterval(id);
-  }, [emscEnabled, period, minMag, fetchEmsc]);
+  }, [urlReady, emscEnabled, period, minMag, fetchEmsc]);
+
+  // Keep the page address in step with the view, so copying it from the
+  // browser shares what is on screen (the one-time `sismo` link is not kept).
+  useEffect(() => {
+    if (!urlReady) return;
+    const search = buildSearch({
+      period,
+      minMag,
+      sgc: sgcEnabled,
+      emsc: emscEnabled,
+      // A selection taken from the link that is still waiting for the globe stays in the address.
+      country: selectedCountry?.id ?? pendingUrlRef.current.country,
+      plate: selectedPlate?.info.code ?? pendingUrlRef.current.plate,
+      list: listOpen,
+    });
+    try {
+      if (search !== window.location.search) {
+        window.history.replaceState(null, '', `${window.location.pathname}${search}`);
+      }
+    } catch {
+      /* some embedded browsers do not allow it: the app works the same without */
+    }
+  }, [urlReady, period, minMag, sgcEnabled, emscEnabled, selectedCountry?.id, selectedPlate?.info.code, listOpen]);
+
+  useEffect(() => {
+    if (!linkCopied) return;
+    const t = setTimeout(() => setLinkCopied(false), 2000);
+    return () => clearTimeout(t);
+  }, [linkCopied]);
+
+  useEffect(() => {
+    if (!linkNotice) return;
+    const t = setTimeout(() => setLinkNotice(null), 10_000);
+    return () => clearTimeout(t);
+  }, [linkNotice]);
 
   useEffect(() => {
     if (!toastQuake) return;
@@ -549,8 +626,10 @@ export default function GlobeExperience() {
     [selectedPlate]
   );
 
+  // The stats, alerts and list drawers share the right-hand side: one at a time.
   const openStats = useCallback(() => {
     setAlertsOpen(false);
+    setListOpen(false);
     setStatsOpen(true);
   }, []);
 
@@ -592,6 +671,7 @@ export default function GlobeExperience() {
   if (emscEnabled && emsc.error && !emsc.data) {
     banners.push('No se pudieron obtener los reportes ciudadanos del EMSC todavía. Reintentando cada minuto…');
   }
+  if (linkNotice) banners.push(linkNotice);
 
   const displayedQuakes = useMemo(() => {
     if (selectedPlate) {
@@ -647,6 +727,107 @@ export default function GlobeExperience() {
     setFlyTo({ lat: q.lat, lng: q.lng, altitude: 0.9 });
   }, []);
 
+  const handleGlobeReady = useCallback(() => setGlobeReady(true), []);
+
+  // ---- shareable links ----
+  const copyLink = useCallback(async (url: string) => {
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      ok = true;
+    } catch {
+      try {
+        // Older browsers, or a page where the async clipboard is not allowed.
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch {
+        ok = false;
+      }
+    }
+    if (ok) setLinkCopied(true);
+    else window.prompt('Copia este enlace:', url);
+  }, []);
+
+  const viewLink = () =>
+    `${window.location.origin}${window.location.pathname}${buildSearch({
+      period,
+      minMag,
+      sgc: sgcEnabled,
+      emsc: emscEnabled,
+      country: selectedCountry?.id ?? null,
+      plate: selectedPlate?.info.code ?? null,
+      list: true,
+    })}`;
+
+  // A link to one quake carries just what is needed to find it again.
+  const quakeLink = (q: QuakeFeature) => {
+    const p = periodCovering(Date.now() - q.time);
+    return `${window.location.origin}${window.location.pathname}${buildSearch({
+      period: p,
+      minMag: minMagFor(q.mag, p),
+      sgc: q.source === 'SGC',
+      emsc: q.source === 'EMSC' || !!q.citizen,
+      quake: q.id,
+    })}`;
+  };
+
+  const handleListSelect = useCallback(
+    (q: QuakeFeature) => {
+      setSelectedQuake(q);
+      locateQuake(q);
+    },
+    [locateQuake]
+  );
+
+  // Apply what the page address asked for as soon as the data it refers to exists.
+  useEffect(() => {
+    // Wait for the globe too: the camera flight that comes with a selection
+    // would otherwise be lost, and zooming back out would then clear it.
+    const id = pendingUrlRef.current.country;
+    if (!id || !countries || !globeReady) return;
+    pendingUrlRef.current.country = null;
+    const feature = (countries.features ?? []).find(
+      (f: any) => String(f.id).padStart(3, '0') === id.padStart(3, '0')
+    );
+    if (feature) selectCountry(feature, { animate: true });
+  }, [countries, globeReady, selectCountry]);
+
+  useEffect(() => {
+    const code = pendingUrlRef.current.plate;
+    if (!code || platePolygons.length === 0 || !globeReady) return;
+    pendingUrlRef.current.plate = null;
+    handlePlateSelectChange(code);
+  }, [platePolygons, globeReady, handlePlateSelectChange]);
+
+  useEffect(() => {
+    const id = pendingUrlRef.current.quake;
+    if (!id) return;
+    const found = allQuakes.find((q) => q.id === id);
+    if (found) {
+      pendingUrlRef.current.quake = null;
+      setSelectedQuake(found);
+      locateQuake(found);
+      return;
+    }
+    // Not there: wait until every enabled source has answered before giving up.
+    const settled =
+      !usgs.loading &&
+      !!usgs.data &&
+      (!sgcEnabled || !!sgc.data || !!sgc.error) &&
+      (!emscEnabled || !!emsc.data || !!emsc.error);
+    if (settled) {
+      pendingUrlRef.current.quake = null;
+      setLinkNotice('El sismo del enlace ya no está en el período mostrado. Prueba con un período más largo.');
+    }
+  }, [allQuakes, usgs, sgc, emsc, sgcEnabled, emscEnabled, locateQuake]);
+
   const maxMag = displayedQuakes.length ? Math.max(...displayedQuakes.map((q) => q.mag ?? 0)) : null;
   const shownToast = alertToastQuake ?? toastQuake;
 
@@ -666,6 +847,7 @@ export default function GlobeExperience() {
           selectedPlate={plateRenderFeature}
           flyTo={flyTo}
           onZoomChange={handleZoomChange}
+          onReady={handleGlobeReady}
         />
       </div>
 
@@ -777,9 +959,20 @@ export default function GlobeExperience() {
             📊 Estadísticas
           </button>
           <button
+            className={`btn ${listOpen ? 'active' : ''}`}
+            onClick={() => {
+              setStatsOpen(false);
+              setAlertsOpen(false);
+              setListOpen((v) => !v);
+            }}
+          >
+            📋 Lista
+          </button>
+          <button
             className={`btn ${alertSettings.enabled ? 'active' : ''}`}
             onClick={() => {
               setStatsOpen(false);
+              setListOpen(false);
               setAlertsOpen((v) => !v);
             }}
           >
@@ -801,7 +994,18 @@ export default function GlobeExperience() {
 
       {statsOpen && <StatsPanel scope={statsScope} onClose={() => setStatsOpen(false)} />}
 
-      {!alertsOpen && !statsOpen && !selectedCountry && selectedPlate && (
+      {listOpen && (
+        <QuakeList
+          quakes={displayedQuakes}
+          scopeLabel={statsScope.label}
+          linkCopied={linkCopied}
+          onSelect={handleListSelect}
+          onCopyLink={() => copyLink(viewLink())}
+          onClose={() => setListOpen(false)}
+        />
+      )}
+
+      {!alertsOpen && !statsOpen && !listOpen && !selectedCountry && selectedPlate && (
         <PlatePanel
           name={selectedPlate.info.name}
           code={selectedPlate.info.code}
@@ -814,7 +1018,7 @@ export default function GlobeExperience() {
         />
       )}
 
-      {!alertsOpen && !statsOpen && selectedCountry && (
+      {!alertsOpen && !statsOpen && !listOpen && selectedCountry && (
         <CountryPanel
           name={selectedCountry.name}
           flag={flagEmoji(selectedCountry.alpha2)}
@@ -860,7 +1064,14 @@ export default function GlobeExperience() {
         </div>
       ))}
 
-      {selectedQuake && <QuakeModal quake={selectedQuake} onClose={() => setSelectedQuake(null)} />}
+      {selectedQuake && (
+        <QuakeModal
+          quake={selectedQuake}
+          onClose={() => setSelectedQuake(null)}
+          onCopyLink={() => copyLink(quakeLink(selectedQuake))}
+          linkCopied={linkCopied}
+        />
+      )}
       {sourcesOpen && <SourcesModal onClose={() => setSourcesOpen(false)} />}
     </div>
   );
