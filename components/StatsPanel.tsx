@@ -11,6 +11,7 @@ export interface StatsScope {
   label: string;
   bbox: Bbox | null;
   plateCode: string | null;
+  countryId: string | null;
 }
 
 const YEAR_OPTIONS = [5, 10, 20, 30];
@@ -50,10 +51,16 @@ export default function StatsPanel({ scope, onClose }: { scope: StatsScope; onCl
   const bbox = useMemo(() => sanitizeBbox(scope.bbox), [scope.bbox]);
   const bboxKey = bbox ? bbox.join(',') : '';
   const request = useMemo(
-    () => ({ minMag, years, bbox: scope.plateCode ? null : bbox, plateCode: scope.plateCode }),
+    () => ({
+      minMag,
+      years,
+      bbox: scope.plateCode || scope.countryId ? null : bbox,
+      plateCode: scope.plateCode,
+      countryId: scope.plateCode ? null : scope.countryId,
+    }),
     // bboxKey stands in for the (value-equal but identity-unstable) bbox array
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [minMag, years, bboxKey, scope.plateCode]
+    [minMag, years, bboxKey, scope.plateCode, scope.countryId]
   );
   const key = statsQueryString(request);
 
@@ -84,7 +91,11 @@ export default function StatsPanel({ scope, onClose }: { scope: StatsScope; onCl
   const data = state.key === key ? state.data : null;
   const bbNote =
     scope.kind === 'country'
-      ? 'Región = rectángulo que rodea al país: incluye zonas vecinas y mar adyacente.'
+      ? data?.offshoreKm
+        ? `Cuenta los sismos dentro del territorio del país y los ocurridos en el mar a menos de ${data.offshoreKm} km de su costa (siempre para el país más cercano). Fronteras de Natural Earth 1:50m: simplificadas, con margen de unos kilómetros.`
+        : scope.countryId
+          ? 'Cuenta los sismos dentro del territorio del país y los ocurridos en el mar cerca de su costa.'
+          : 'Este territorio no tiene un código de país estándar: la región es un rectángulo que lo rodea e incluye zonas vecinas y mar adyacente.'
       : scope.kind === 'plate'
         ? 'Solo eventos cuyo epicentro cae dentro del polígono de la placa (Bird, 2003).'
         : null;

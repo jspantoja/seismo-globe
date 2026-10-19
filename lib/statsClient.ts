@@ -7,6 +7,7 @@ export interface StatsRequest {
   years: number;
   bbox: Bbox | null;
   plateCode: string | null;
+  countryId?: string | null; // exact borders; takes precedence over bbox
 }
 
 const CLIENT_TTL_MS = 10 * 60_000;
@@ -28,6 +29,7 @@ export function sanitizeBbox(b: Bbox | null): Bbox | null {
 export function statsQueryString(req: StatsRequest): string {
   const sp = new URLSearchParams({ minmag: String(req.minMag), years: String(req.years) });
   if (req.plateCode) sp.set('plate', req.plateCode);
+  else if (req.countryId) sp.set('country', req.countryId);
   else if (req.bbox) sp.set('bbox', req.bbox.join(','));
   return sp.toString();
 }

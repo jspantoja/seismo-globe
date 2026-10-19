@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json",
-    "test": "tsx tests/emsc.test.mts && tsx tests/resilience.test.mts && tsx tests/urlState.test.mts"
+    "test": "tsx tests/emsc.test.mts && tsx tests/resilience.test.mts && tsx tests/urlState.test.mts && tsx tests/countryAttribution.test.mts"
   },
   "dependencies": {
     "next": "^16.3.6",

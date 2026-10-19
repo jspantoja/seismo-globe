@@ -109,6 +109,8 @@ export interface StatsPrecision {
 export interface StatsResponse {
   scope: 'world' | 'country' | 'plate';
   plateCode: string | null;
+  countryId: string | null; // set when the country was resolved with its real borders
+  offshoreKm: number | null; // sea distance from the coast still counted for the country
   bbox: [number, number, number, number] | null;
   source: SourceMeta;
   range: { from: string; to: string; years: number; yearsElapsed: number };

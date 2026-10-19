@@ -33,6 +33,14 @@ npm run build        # compilación de producción (incluye el paso prebuild)
 que necesita el globo, verificados contra un SHA-256 fijo. Si algo no se puede descargar, no
 rompe la compilación: la app pide ese archivo a una CDN pública.
 
+## A qué país pertenece un sismo
+
+Un sismo cuenta para el país en cuyo territorio ocurre; si ocurre en el mar, para el país más
+cercano siempre que su costa esté a 200 km o menos; más lejos (alta mar, dorsales) no pertenece a
+ningún país. Así cada sismo tiene como máximo un país y los totales suman con el resto del mundo.
+La regla vive en `lib/countryAttribution.ts` y la usan igual la lista del globo y las estadísticas.
+Fronteras: Natural Earth 1:50m (`world-atlas`), simplificadas, con un margen de unos kilómetros.
+
 ## Enlaces compartibles
 
 La dirección de la página refleja la vista, así que copiar el enlace comparte lo que se ve:
@@ -47,7 +55,8 @@ corre tipos, pruebas y compilación en cada push y pull request.
 
 ## Límites conocidos
 
-- Las estadísticas por país usan el rectángulo que envuelve al país, no su frontera exacta.
+- La frontera de cada país es la de Natural Earth 1:50m: simplificada, y los islotes muy pequeños pueden faltar.
+- Un sismo en el mar justo equidistante de dos países se asigna a uno de ellos sin criterio especial.
 - PB2002 es un modelo de 2003.
 - El USGS es completo desde M4.5 fuera de EE. UU.
 - La copia del servidor vive en memoria de cada instancia; se pierde al reiniciarse.

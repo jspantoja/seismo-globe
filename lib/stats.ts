@@ -1,4 +1,6 @@
 import { coverBoxes, getBbox, mergeToMultiPolygon, pointInGeometry } from './geo';
+import { OFFSHORE_KM, countryOf, queryBoxesFor } from './countryAttribution';
+import { getCountryIndex } from './countryIndexServer';
 import type {
   SourceMeta,
   StatsBin,
@@ -56,6 +58,7 @@ export interface StatsQuery {
   years: number;
   bbox: BBox | null;
   plateCode: string | null;
+  countryId: string | null; // ISO 3166-1 numeric ("170"): exact borders instead of a rectangle
 }
 
 export function parseStatsQuery(sp: URLSearchParams): StatsQuery {
@@ -88,7 +91,14 @@ export function parseStatsQuery(sp: URLSearchParams): StatsQuery {
     plateCode = plateRaw.toUpperCase();
   }
 
-  return { minMag, years, bbox, plateCode };
+  let countryId: string | null = null;
+  const countryRaw = sp.get('country');
+  if (countryRaw) {
+    if (!/^\d{3}$/.test(countryRaw)) throw new StatsError(400, 'invalid_country', 'Código de país inválido.');
+    countryId = countryRaw;
+  }
+
+  return { minMag, years, bbox, plateCode, countryId };
 }
 
 // ---------------------------------------------------------------- CSV parsing
@@ -237,11 +247,15 @@ export interface ComputeInput {
   minMag: number;
   scope: 'world' | 'country' | 'plate';
   plateCode: string | null;
+  countryId?: string | null;
+  offshoreKm?: number | null;
   bbox: BBox | null;
 }
 
 export function computeStats(input: ComputeInput): StatsResponse {
   const { rows, now, years, requestedMinMag, minMag, scope, plateCode, bbox } = input;
+  const countryId = input.countryId ?? null;
+  const offshoreKm = input.offshoreKm ?? null;
   const nowDate = new Date(now);
   const startYear = nowDate.getUTCFullYear() - (years - 1);
   const rangeStart = Date.UTC(startYear, 0, 1);
@@ -351,6 +365,8 @@ export function computeStats(input: ComputeInput): StatsResponse {
   return {
     scope,
     plateCode,
+    countryId,
+    offshoreKm,
     bbox,
     source: { ...STATS_SOURCE, fetchedAt: nowDate.toISOString() },
     range: { from: new Date(rangeStart).toISOString().slice(0, 10), to: nowDate.toISOString().slice(0, 10), years, yearsElapsed: round(yearsElapsed, 2) },
@@ -476,6 +492,7 @@ async function compute(query: StatsQuery): Promise<StatsResponse> {
   let bbox = query.bbox;
   let regions: (BBox | null)[] = [query.bbox];
   let plateGeometry: any = null;
+  let countryIndex: Awaited<ReturnType<typeof getCountryIndex>> | null = null;
   if (query.plateCode) {
     // A plate can be split in several features (e.g. Kermadec across the antimeridian).
     const parts = (await getPlates()).filter((f) => String(f.properties?.Code ?? '').toUpperCase() === query.plateCode);
@@ -485,6 +502,24 @@ async function compute(query: StatsQuery): Promise<StatsResponse> {
     // Query only the rectangles that actually cover the plate: for huge plates the
     // plain bbox spans a whole latitude band of the planet.
     regions = coverBoxes(plateGeometry) ?? [bbox];
+  } else if (query.countryId) {
+    try {
+      countryIndex = await getCountryIndex();
+    } catch (err) {
+      throw new StatsError(503, 'countries_unavailable', `No se pudieron cargar las fronteras (${err instanceof Error ? err.message : 'error'}).`);
+    }
+    const entry = countryIndex.byId.get(query.countryId);
+    if (!entry) throw new StatsError(404, 'unknown_country', 'País desconocido.');
+    // Rectangles hugging the territory plus the offshore margin; the exact
+    // ownership of each event is decided below with the real borders.
+    const boxes = queryBoxesFor(entry, OFFSHORE_KM);
+    regions = boxes;
+    bbox = [
+      Math.min(...boxes.map((r) => r[0])),
+      Math.min(...boxes.map((r) => r[1])),
+      Math.max(...boxes.map((r) => r[2])),
+      Math.max(...boxes.map((r) => r[3])),
+    ];
   }
 
   const countAll = async (mag: number) =>
@@ -518,6 +553,11 @@ async function compute(query: StatsQuery): Promise<StatsResponse> {
     rows.sort((a, b) => a.t - b.t);
   }
   if (plateGeometry) rows = rows.filter((r) => pointInGeometry(r.lng, r.lat, plateGeometry));
+  if (countryIndex && query.countryId) {
+    const id = query.countryId;
+    const index = countryIndex;
+    rows = rows.filter((r) => countryOf(index, r.lng, r.lat, OFFSHORE_KM) === id);
+  }
 
   return computeStats({
     rows,
@@ -525,8 +565,10 @@ async function compute(query: StatsQuery): Promise<StatsResponse> {
     years: query.years,
     requestedMinMag: query.minMag,
     minMag,
-    scope: query.plateCode ? 'plate' : query.bbox ? 'country' : 'world',
+    scope: query.plateCode ? 'plate' : query.countryId || query.bbox ? 'country' : 'world',
     plateCode: query.plateCode,
+    countryId: query.plateCode ? null : query.countryId,
+    offshoreKm: !query.plateCode && query.countryId ? OFFSHORE_KM : null,
     bbox,
   });
 }

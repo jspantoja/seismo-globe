@@ -44,6 +44,11 @@ const COPIES = [
     from: 'node_modules/world-atlas/countries-110m.json',
     sha256: '2516c915867c7baf18ddec727aec46c315541a07cfb3d79a6559b05d5e94eee8',
   },
+  {
+    name: 'countries-50m.json',
+    from: 'node_modules/world-atlas/countries-50m.json',
+    sha256: '04342cdc1e3016bcd7db1630de95684d67b79fe3c8c460321e87aef469502394',
+  },
   { name: 'earth-dark.jpg', from: 'node_modules/three-globe/example/img/earth-dark.jpg' },
 ];
 

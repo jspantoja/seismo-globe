@@ -60,7 +60,7 @@ function pointInRing(lng: number, lat: number, ring: [number, number][]): boolea
   return inside;
 }
 
-function pointInPolygonRings(lng: number, lat: number, rings: [number, number][][]): boolean {
+export function pointInPolygonRings(lng: number, lat: number, rings: [number, number][][]): boolean {
   if (rings.length === 0) return false;
   if (!pointInRing(lng, lat, rings[0])) return false;
   for (let i = 1; i < rings.length; i++) {

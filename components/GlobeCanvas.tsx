@@ -13,6 +13,7 @@ function escapeHtml(s: string): string {
 const Globe = dynamic(() => import('react-globe.gl'), { ssr: false });
 
 // The app's own copy (scripts/fetch-assets.mjs) is used unless it fails to load.
+const FLIGHT_MS = 1200;
 const EARTH_TEXTURE_LOCAL = '/data/earth-dark.jpg';
 const EARTH_TEXTURE_CDN = 'https://cdn.jsdelivr.net/npm/three-globe@2.31.1/example/img/earth-dark.jpg';
 
@@ -49,6 +50,7 @@ interface Props {
   flyTo: FlyTo | null;
   onZoomChange: (pov: Pov) => void;
   onReady?: () => void; // the globe is initialised and the camera can be moved
+  onFlightStart?: (durationMs: number) => void; // a programmatic camera flight is really starting now
 }
 
 export default function GlobeCanvas({
@@ -65,6 +67,7 @@ export default function GlobeCanvas({
   flyTo,
   onZoomChange,
   onReady,
+  onFlightStart,
 }: Props) {
   const globeRef = useRef<any>(null);
   // The globe is loaded lazily: a camera flight requested before it exists
@@ -72,6 +75,8 @@ export default function GlobeCanvas({
   const [globeReady, setGlobeReady] = useState(false);
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
+  const onFlightStartRef = useRef(onFlightStart);
+  onFlightStartRef.current = onFlightStart;
   const handleGlobeReady = useCallback(() => {
     setGlobeReady(true);
     onReadyRef.current?.();
@@ -159,7 +164,10 @@ export default function GlobeCanvas({
 
   useEffect(() => {
     if (flyTo && globeReady && globeRef.current) {
-      globeRef.current.pointOfView({ lat: flyTo.lat, lng: flyTo.lng, altitude: flyTo.altitude }, 1200);
+      // The flight starts only now (the request may have waited for the globe or a busy
+      // main thread), so the parent's "ignore camera events during a flight" window starts now too.
+      onFlightStartRef.current?.(FLIGHT_MS);
+      globeRef.current.pointOfView({ lat: flyTo.lat, lng: flyTo.lng, altitude: flyTo.altitude }, FLIGHT_MS);
     }
   }, [flyTo, globeReady]);
 

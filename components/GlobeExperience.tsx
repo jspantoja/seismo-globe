@@ -31,6 +31,8 @@ import {
 } from '@/lib/alerts';
 import { mergeCitizenReports } from '@/lib/citizen';
 import { fetchJsonFirst } from '@/lib/assets';
+import { buildCountryIndex, countryOf, queryBoxesFor, type CountryIndex } from '@/lib/countryAttribution';
+import { loadDetailedCountryIndex } from '@/lib/countryIndexClient';
 import { loadLastQuakes, saveLastQuakes } from '@/lib/localCache';
 import { formatRelative } from '@/lib/format';
 import SourcesModal from './SourcesModal';
@@ -101,6 +103,8 @@ interface CountryBbox {
 
 export default function GlobeExperience() {
   const [countries, setCountries] = useState<any | null>(null);
+  // Detailed borders (1:50m), loaded when a country is first selected; until then the globe's own 1:110m ones are used.
+  const [detailedIndex, setDetailedIndex] = useState<CountryIndex | null>(null);
   const [boundaries, setBoundaries] = useState<BoundaryPath[]>([]);
   const [platePolygons, setPlatePolygons] = useState<any[]>([]);
 
@@ -478,6 +482,21 @@ export default function GlobeExperience() {
     };
   }, [selectedCountry]);
 
+  useEffect(() => {
+    if (!selectedCountry || detailedIndex) return;
+    let cancelled = false;
+    loadDetailedCountryIndex()
+      .then((index) => {
+        if (!cancelled) setDetailedIndex(index);
+      })
+      .catch(() => {}); // keep using the coarse borders
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCountry, detailedIndex]);
+
+  const coarseIndex = useMemo(() => (countries ? buildCountryIndex(countries.features ?? []) : null), [countries]);
+
   const selectCountry = useCallback(async (feature: any, opts: { animate: boolean; altitude?: number }) => {
     const id = String(feature.id);
     const name = feature.properties?.name ?? 'País';
@@ -508,6 +527,12 @@ export default function GlobeExperience() {
       alpha2: codes?.alpha2 ?? '',
       alpha3: codes?.alpha3 ?? '',
     });
+  }, []);
+
+  // Camera events fired by a programmatic flight must not be mistaken for the user zooming
+  // over a country. The window is re-based when the flight actually starts.
+  const handleFlightStart = useCallback((durationMs: number) => {
+    flyingUntilRef.current = Math.max(flyingUntilRef.current, Date.now() + durationMs + 500);
   }, []);
 
   const clearSelection = useCallback((opts: { resetCamera: boolean }) => {
@@ -679,9 +704,21 @@ export default function GlobeExperience() {
       return allQuakes.filter((q) => isInBbox(q.lng, q.lat, bbox) && pointInGeometry(q.lng, q.lat, feature.geometry));
     }
     if (!selectedCountry) return allQuakes;
+    // A quake belongs to the country it is in, or (at sea) to the nearest one within
+    // OFFSHORE_KM of its coast — the same rule the statistics use (lib/countryAttribution.ts).
+    const index = detailedIndex ?? coarseIndex;
+    const entry = index?.byId.get(selectedCountry.id);
+    if (index && entry) {
+      const boxes = queryBoxesFor(entry);
+      const id = selectedCountry.id;
+      return allQuakes.filter(
+        (q) => boxes.some((b) => isInBbox(q.lng, q.lat, b)) && countryOf(index, q.lng, q.lat) === id
+      );
+    }
+    // Borders not available (yet): fall back to a rectangle around the country.
     const padded = padBbox(selectedCountry.bbox, COUNTRY_QUAKE_PAD_DEG);
     return allQuakes.filter((q) => isInBbox(q.lng, q.lat, padded));
-  }, [allQuakes, selectedCountry, selectedPlate]);
+  }, [allQuakes, selectedCountry, selectedPlate, detailedIndex, coarseIndex]);
 
   // Bounded "seismic pulse" set: fresh events always included, topped up by
   // magnitude so the animation cost never scales with the full dataset.
@@ -699,6 +736,7 @@ export default function GlobeExperience() {
         label: `🧭 Placa ${selectedPlate.info.name}`,
         bbox: null,
         plateCode: selectedPlate.info.code,
+        countryId: null,
       };
     }
     if (selectedCountry) {
@@ -707,9 +745,12 @@ export default function GlobeExperience() {
         label: `${flagEmoji(selectedCountry.alpha2)} ${selectedCountry.name}`.trim(),
         bbox: selectedCountry.bbox,
         plateCode: null,
+        // The server resolves the real borders from this code (3-digit ISO numeric);
+        // territories without one fall back to the rectangle.
+        countryId: /^\d{3}$/.test(selectedCountry.id) ? selectedCountry.id : null,
       };
     }
-    return { kind: 'world', label: '🌍 Todo el mundo', bbox: null, plateCode: null };
+    return { kind: 'world', label: '🌍 Todo el mundo', bbox: null, plateCode: null, countryId: null };
   }, [selectedPlate, selectedCountry]);
 
   // Newest first, capped: the arrow layer is DOM-based and must stay tiny.
@@ -848,6 +889,7 @@ export default function GlobeExperience() {
           flyTo={flyTo}
           onZoomChange={handleZoomChange}
           onReady={handleGlobeReady}
+          onFlightStart={handleFlightStart}
         />
       </div>
 
