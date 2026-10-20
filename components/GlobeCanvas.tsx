@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BoundaryPath, QuakeFeature } from '@/lib/types';
 import { magColor, sourceLabel } from '@/lib/format';
+import { pointScaleFor } from '@/lib/globeView';
 
 /** The globe renders point labels as HTML; place names come from third-party feeds. */
 function escapeHtml(s: string): string {
@@ -12,8 +13,9 @@ function escapeHtml(s: string): string {
 
 const Globe = dynamic(() => import('react-globe.gl'), { ssr: false });
 
+const FLIGHT_MS = 1200; // length of a programmatic camera flight
+
 // The app's own copy (scripts/fetch-assets.mjs) is used unless it fails to load.
-const FLIGHT_MS = 1200;
 const EARTH_TEXTURE_LOCAL = '/data/earth-dark.jpg';
 const EARTH_TEXTURE_CDN = 'https://cdn.jsdelivr.net/npm/three-globe@2.31.1/example/img/earth-dark.jpg';
 
@@ -51,6 +53,8 @@ interface Props {
   onZoomChange: (pov: Pov) => void;
   onReady?: () => void; // the globe is initialised and the camera can be moved
   onFlightStart?: (durationMs: number) => void; // a programmatic camera flight is really starting now
+  userMarker?: { lat: number; lng: number; label: string } | null; // "you are here" (kept in this browser only)
+  radiusRing?: BoundaryPath | null; // circle drawn around the marker
 }
 
 export default function GlobeCanvas({
@@ -68,11 +72,14 @@ export default function GlobeCanvas({
   onZoomChange,
   onReady,
   onFlightStart,
+  userMarker = null,
+  radiusRing = null,
 }: Props) {
   const globeRef = useRef<any>(null);
   // The globe is loaded lazily: a camera flight requested before it exists
   // (e.g. a country taken from a shared link) is applied as soon as it does.
   const [globeReady, setGlobeReady] = useState(false);
+  const [pointScale, setPointScale] = useState(1);
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
   const onFlightStartRef = useRef(onFlightStart);
@@ -139,6 +146,21 @@ export default function GlobeCanvas({
   const onQuakeClickRef = useRef(onQuakeClick);
   onQuakeClickRef.current = onQuakeClick;
   const arrowElement = useCallback((d: any) => {
+    if (d.__user) {
+      const marker = document.createElement('div');
+      marker.className = 'user-marker';
+      marker.setAttribute('role', 'img');
+      marker.setAttribute('aria-label', d.label);
+      const pulse = document.createElement('span');
+      pulse.className = 'user-marker__pulse';
+      const dot = document.createElement('span');
+      dot.className = 'user-marker__dot';
+      const label = document.createElement('span');
+      label.className = 'user-marker__label';
+      label.textContent = d.label;
+      marker.append(pulse, dot, label);
+      return marker;
+    }
     const q = d as QuakeFeature;
     const root = document.createElement('div');
     root.className = 'quake-arrow';
@@ -162,6 +184,13 @@ export default function GlobeCanvas({
     return root;
   }, []);
 
+  // Arrow markers for brand-new quakes, plus the "you are here" marker when there is one.
+  const htmlElements = useMemo(
+    () => (userMarker ? [...freshQuakes, { __user: true, id: '__user', ...userMarker }] : freshQuakes),
+    [freshQuakes, userMarker]
+  );
+  const paths = useMemo(() => (radiusRing ? [...boundaries, radiusRing] : boundaries), [boundaries, radiusRing]);
+
   useEffect(() => {
     if (flyTo && globeReady && globeRef.current) {
       // The flight starts only now (the request may have waited for the globe or a busy
@@ -179,7 +208,10 @@ export default function GlobeCanvas({
       backgroundColor="rgba(0,0,0,0)"
       atmosphereColor="#4fd1c5"
       atmosphereAltitude={0.15}
-      onZoom={(pov: any) => onZoomChange(pov)}
+      onZoom={(pov: any) => {
+        onZoomChange(pov);
+        setPointScale(pointScaleFor(pov.altitude)); // no re-render unless the step changes
+      }}
       // Country borders (or a selected country's own subdivisions)
       polygonsData={polygons}
       polygonsTransitionDuration={220}
@@ -212,12 +244,14 @@ export default function GlobeCanvas({
         if (!d.properties?.__sub && !d.properties?.__plate) onCountryClick(d);
       }}
       // Tectonic plate boundaries — emphasized layer, color-coded by type
-      pathsData={boundaries}
+      pathsData={paths}
       pathPoints={(d: any) => d.coords}
-      pathColor={(d: any) => (d.boundaryType === 'subduction' ? '#ff8a3d' : '#7dd3fc')}
-      pathStroke={(d: any) => (d.boundaryType === 'subduction' ? 0.55 : 0.35)}
+      pathColor={(d: any) => (d.boundaryType === 'near-radius' ? '#60a5fa' : d.boundaryType === 'subduction' ? '#ff8a3d' : '#7dd3fc')}
+      pathStroke={(d: any) => (d.boundaryType === 'near-radius' ? 0.5 : d.boundaryType === 'subduction' ? 0.55 : 0.35)}
       pathLabel={(d: any) =>
-        `Límite de placas: ${d.plateA} — ${d.plateB}${d.boundaryType === 'subduction' ? ' (zona de subducción)' : ''}`
+        d.boundaryType === 'near-radius'
+          ? `Radio de ${d.plateA} km`
+          : `Límite de placas: ${d.plateA} — ${d.plateB}${d.boundaryType === 'subduction' ? ' (zona de subducción)' : ''}`
       }
       pathTransitionDuration={0}
       // Earthquakes — flat points instead of tall extruded columns.
@@ -230,7 +264,7 @@ export default function GlobeCanvas({
       pointLng={(d: any) => d.lng}
       pointColor={(d: any) => magColor(d.mag)}
       pointAltitude={0.018}
-      pointRadius={(d: any) => Math.max(0.2, (d.mag ?? 1) * 0.15)}
+      pointRadius={(d: any) => Math.max(0.2, (d.mag ?? 1) * 0.15) * pointScale}
       pointResolution={8}
       pointLabel={(d: any) =>
         `M ${d.mag ?? '?'} — ${escapeHtml(String(d.place ?? 'ubicación desconocida'))}${
@@ -248,7 +282,7 @@ export default function GlobeCanvas({
       ringPropagationSpeed={(d: any) => d.speed}
       ringRepeatPeriod={1100}
       // "Nuevo sismo" arrow marker (HTML layer; only a handful of fresh events)
-      htmlElementsData={freshQuakes}
+      htmlElementsData={htmlElements}
       htmlLat={(d: any) => d.lat}
       htmlLng={(d: any) => d.lng}
       htmlAltitude={0.02}

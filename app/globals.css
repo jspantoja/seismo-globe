@@ -551,3 +551,30 @@ html, body {
 }
 
 .modal__share { width: 100%; margin-top: 12px; text-align: center; border: 1px solid var(--panel-border); }
+
+/* ---- "Cerca de mí" ---- */
+.near-panel__status { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-dim); }
+.near-panel__status .spinner { width: 16px; height: 16px; flex: none; }
+.near-panel__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.near-panel__actions .btn { border: 1px solid var(--panel-border); }
+.near-panel__form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; }
+.near-panel__form label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--text-dim); }
+.near-panel__form .btn { grid-column: 1 / -1; border: 1px solid var(--panel-border); }
+.near-panel__form-error { grid-column: 1 / -1; font-size: 12px; color: var(--accent-2); }
+.near-panel__nearest { font-size: 12.5px; color: var(--text); }
+.near-panel__privacy { font-size: 11px; line-height: 1.4; color: var(--text-dim); border-top: 1px solid var(--panel-border); padding-top: 8px; }
+.user-marker { position: relative; width: 0; height: 0; pointer-events: none; }
+.user-marker__dot {
+  position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border-radius: 50%;
+  background: #60a5fa; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+.user-marker__pulse {
+  position: absolute; left: -16px; top: -16px; width: 32px; height: 32px; border-radius: 50%;
+  border: 2px solid #60a5fa; opacity: 0; animation: user-pulse 2.2s ease-out infinite;
+}
+.user-marker__label {
+  position: absolute; left: 0; top: 12px; transform: translateX(-50%); white-space: nowrap;
+  font-size: 11px; font-weight: 700; color: #fff; background: rgba(37, 99, 235, 0.92); padding: 2px 7px; border-radius: 999px;
+}
+@keyframes user-pulse { 0% { transform: scale(0.4); opacity: 0.9; } 100% { transform: scale(1.5); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .user-marker__pulse { animation: none; opacity: 0.5; } }

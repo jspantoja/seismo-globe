@@ -33,10 +33,13 @@ import { mergeCitizenReports } from '@/lib/citizen';
 import { fetchJsonFirst } from '@/lib/assets';
 import { buildCountryIndex, countryOf, queryBoxesFor, type CountryIndex } from '@/lib/countryAttribution';
 import { loadDetailedCountryIndex } from '@/lib/countryIndexClient';
+import { DEFAULT_RADIUS_KM, flightAltitudeFor, nearbyQuakes, radiusPath, type LatLng } from '@/lib/nearby';
+import { describeLocateError, getPosition } from '@/lib/geolocate';
 import { loadLastQuakes, saveLastQuakes } from '@/lib/localCache';
 import { formatRelative } from '@/lib/format';
 import SourcesModal from './SourcesModal';
 import QuakeList from './QuakeList';
+import NearbyPanel, { type NearCenter } from './NearbyPanel';
 import { parseUrlState, buildSearch, periodCovering, minMagFor } from '@/lib/urlState';
 import type { BoundaryPath, EarthquakesResponse, QuakeFeature } from '@/lib/types';
 
@@ -119,6 +122,13 @@ export default function GlobeExperience() {
 
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [listOpen, setListOpen] = useState(false);
+  // "Cerca de mí": the position lives only in this component's memory — never stored, sent or put in a link.
+  const [nearOpen, setNearOpen] = useState(false);
+  const [nearCenter, setNearCenter] = useState<NearCenter | null>(null);
+  const [nearRadius, setNearRadius] = useState<number>(DEFAULT_RADIUS_KM);
+  const [nearLocating, setNearLocating] = useState(false);
+  const [nearError, setNearError] = useState<string | null>(null);
+  const nearOpenRef = useRef(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [linkNotice, setLinkNotice] = useState<string | null>(null);
   // The page address is read once, after mount (not in the initial state, so the
@@ -184,6 +194,7 @@ export default function GlobeExperience() {
 
   alertSettingsRef.current = alertSettings;
   selectedCountryIdRef.current = selectedCountry?.id ?? null;
+  nearOpenRef.current = nearOpen;
   selectedPlateRef.current = selectedPlate;
 
   // Load the geo reference layers once, straight from their public sources.
@@ -504,6 +515,7 @@ export default function GlobeExperience() {
     if (!bbox) return;
 
     setSelectedPlate(null); // country and plate focus are mutually exclusive
+    setNearOpen(false);
 
     if (opts.animate) {
       const [minLng, minLat, maxLng, maxLat] = bbox;
@@ -549,6 +561,7 @@ export default function GlobeExperience() {
   const handleZoomChange = useCallback(
     (pov: Pov) => {
       if (selectedPlateRef.current) return; // a plate is in focus: no country auto-detection
+      if (nearOpenRef.current) return; // "near me" is in focus: the camera is framing the user's circle
       const now = Date.now();
       if (now < flyingUntilRef.current) return; // camera is being flown programmatically
       if (now - lastZoomCheck.current < ZOOM_CHECK_MS) return;
@@ -628,6 +641,7 @@ export default function GlobeExperience() {
       const view = plateCameraView(feature.geometry);
 
       setSelectedCountry(null);
+      setNearOpen(false);
       selectedAltitudeRef.current = 0;
       setSelectedPlate({ info: plateInfo(feature), feature, bbox });
       if (view) {
@@ -655,6 +669,7 @@ export default function GlobeExperience() {
   const openStats = useCallback(() => {
     setAlertsOpen(false);
     setListOpen(false);
+    setNearOpen(false);
     setStatsOpen(true);
   }, []);
 
@@ -698,7 +713,21 @@ export default function GlobeExperience() {
   }
   if (linkNotice) banners.push(linkNotice);
 
+  const nearItems = useMemo(
+    () => (nearOpen && nearCenter ? nearbyQuakes(allQuakes, nearCenter, nearRadius) : []),
+    [nearOpen, nearCenter, nearRadius, allQuakes]
+  );
+  const nearMarker = useMemo(
+    () => (nearOpen && nearCenter ? { lat: nearCenter.lat, lng: nearCenter.lng, label: nearCenter.source === 'gps' ? 'Tú (aprox.)' : 'Punto elegido' } : null),
+    [nearOpen, nearCenter]
+  );
+  const nearRing = useMemo(
+    () => (nearOpen && nearCenter ? radiusPath(nearCenter, nearRadius) : null),
+    [nearOpen, nearCenter, nearRadius]
+  );
+
   const displayedQuakes = useMemo(() => {
+    if (nearOpen && nearCenter) return nearItems.map((n) => n.quake);
     if (selectedPlate) {
       const { bbox, feature } = selectedPlate;
       return allQuakes.filter((q) => isInBbox(q.lng, q.lat, bbox) && pointInGeometry(q.lng, q.lat, feature.geometry));
@@ -718,7 +747,7 @@ export default function GlobeExperience() {
     // Borders not available (yet): fall back to a rectangle around the country.
     const padded = padBbox(selectedCountry.bbox, COUNTRY_QUAKE_PAD_DEG);
     return allQuakes.filter((q) => isInBbox(q.lng, q.lat, padded));
-  }, [allQuakes, selectedCountry, selectedPlate, detailedIndex, coarseIndex]);
+  }, [allQuakes, selectedCountry, selectedPlate, detailedIndex, coarseIndex, nearOpen, nearCenter, nearItems]);
 
   // Bounded "seismic pulse" set: fresh events always included, topped up by
   // magnitude so the animation cost never scales with the full dataset.
@@ -819,6 +848,47 @@ export default function GlobeExperience() {
     })}`;
   };
 
+  // ---- earthquakes near me ----
+  const locateMe = useCallback(async () => {
+    setNearLocating(true);
+    setNearError(null);
+    try {
+      const p = await getPosition();
+      setNearCenter({ lat: p.lat, lng: p.lng, source: 'gps' });
+    } catch (err) {
+      setNearError(describeLocateError(err));
+    } finally {
+      setNearLocating(false);
+    }
+  }, []);
+
+  const toggleNear = useCallback(() => {
+    if (nearOpen) {
+      setNearOpen(false);
+      return;
+    }
+    setStatsOpen(false);
+    setAlertsOpen(false);
+    setListOpen(false);
+    // The circle replaces any country or plate focus (and its link parameters).
+    setSelectedCountry(null);
+    setSelectedPlate(null);
+    selectedAltitudeRef.current = 0;
+    setNearOpen(true);
+    if (!nearCenter && !nearLocating) void locateMe();
+  }, [nearOpen, nearCenter, nearLocating, locateMe]);
+
+  const chooseNearPoint = useCallback((p: LatLng) => {
+    setNearError(null);
+    setNearCenter({ lat: p.lat, lng: p.lng, source: 'manual' });
+  }, []);
+
+  // Frame the circle whenever the point or the radius changes while the panel is open.
+  useEffect(() => {
+    if (!nearOpen || !nearCenter) return;
+    setFlyTo({ lat: nearCenter.lat, lng: nearCenter.lng, altitude: flightAltitudeFor(nearRadius) });
+  }, [nearOpen, nearCenter, nearRadius]);
+
   const handleListSelect = useCallback(
     (q: QuakeFeature) => {
       setSelectedQuake(q);
@@ -890,6 +960,8 @@ export default function GlobeExperience() {
           onZoomChange={handleZoomChange}
           onReady={handleGlobeReady}
           onFlightStart={handleFlightStart}
+          userMarker={nearMarker}
+          radiusRing={nearRing}
         />
       </div>
 
@@ -1005,16 +1077,21 @@ export default function GlobeExperience() {
             onClick={() => {
               setStatsOpen(false);
               setAlertsOpen(false);
+              setNearOpen(false);
               setListOpen((v) => !v);
             }}
           >
             📋 Lista
+          </button>
+          <button className={`btn ${nearOpen ? 'active' : ''}`} onClick={toggleNear} aria-pressed={nearOpen}>
+            📍 Cerca de mí
           </button>
           <button
             className={`btn ${alertSettings.enabled ? 'active' : ''}`}
             onClick={() => {
               setStatsOpen(false);
               setListOpen(false);
+              setNearOpen(false);
               setAlertsOpen((v) => !v);
             }}
           >
@@ -1047,7 +1124,23 @@ export default function GlobeExperience() {
         />
       )}
 
-      {!alertsOpen && !statsOpen && !listOpen && !selectedCountry && selectedPlate && (
+      {nearOpen && (
+        <NearbyPanel
+          center={nearCenter}
+          locating={nearLocating}
+          error={nearError}
+          radiusKm={nearRadius}
+          items={nearItems}
+          periodLabel={`${PERIOD_LABEL[period]}${minMag > 0 ? ` · M${minMag}+` : ''}`}
+          onRadius={setNearRadius}
+          onLocate={locateMe}
+          onManual={chooseNearPoint}
+          onSelect={handleListSelect}
+          onClose={() => setNearOpen(false)}
+        />
+      )}
+
+      {!alertsOpen && !statsOpen && !listOpen && !nearOpen && !selectedCountry && selectedPlate && (
         <PlatePanel
           name={selectedPlate.info.name}
           code={selectedPlate.info.code}
@@ -1060,7 +1153,7 @@ export default function GlobeExperience() {
         />
       )}
 
-      {!alertsOpen && !statsOpen && !listOpen && selectedCountry && (
+      {!alertsOpen && !statsOpen && !listOpen && !nearOpen && selectedCountry && (
         <CountryPanel
           name={selectedCountry.name}
           flag={flagEmoji(selectedCountry.alpha2)}
