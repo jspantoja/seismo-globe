@@ -41,6 +41,17 @@ ningún país. Así cada sismo tiene como máximo un país y los totales suman c
 La regla vive en `lib/countryAttribution.ts` y la usan igual la lista del globo y las estadísticas.
 Fronteras: Natural Earth 1:50m (`world-atlas`), simplificadas, con un margen de unos kilómetros.
 
+## Alertas
+
+Se configuran en el navegador y se guardan solo ahí (`localStorage`); nada va al servidor. Se puede
+elegir una magnitud mínima global, un umbral propio por país (que reemplaza al global, para más o
+menos sensibilidad) y un horario sin avisos con hora del dispositivo, que puede cruzar la medianoche
+y admite una excepción: «avisar igual si es M6 o más». Los países vigilados se asignan con la misma
+regla que las estadísticas (territorio, o costa a 200 km o menos). Si llegan varios sismos a la vez
+se avisa del de mayor magnitud. Un sismo sin magnitud publicada solo avisa si el umbral es «todas».
+Los ajustes guardados por versiones anteriores se migran sin perder nada (`parseAlertSettings` en
+`lib/alerts.ts`). Las alertas funcionan solo mientras la pestaña esté abierta: no hay envío en segundo plano.
+
 ## Enlaces compartibles
 
 La dirección de la página refleja la vista, así que copiar el enlace comparte lo que se ve:
@@ -57,6 +68,7 @@ corre tipos, pruebas y compilación en cada push y pull request.
 
 - La frontera de cada país es la de Natural Earth 1:50m: simplificada, y los islotes muy pequeños pueden faltar.
 - Un sismo en el mar justo equidistante de dos países se asigna a uno de ellos sin criterio especial.
+- Las alertas no llegan con la pestaña cerrada (no hay notificaciones push desde un servidor).
 - PB2002 es un modelo de 2003.
 - El USGS es completo desde M4.5 fuera de EE. UU.
 - La copia del servidor vive en memoria de cada instancia; se pierde al reiniciarse.

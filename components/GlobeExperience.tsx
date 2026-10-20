@@ -22,11 +22,13 @@ import {
 import { buildPlateList, plateInfo, plateCameraView, type PlateInfo } from '@/lib/plates';
 import { resolveIsoCodes, flagEmoji, getSubdivisions, findIntersectingPlates } from '@/lib/countryData';
 import {
+  defaultAlertSettings,
   loadAlertSettings,
   saveAlertSettings,
   requestNotificationPermission,
   notifyQuake,
   notificationsSupported,
+  pickAlert,
   type AlertSettings,
 } from '@/lib/alerts';
 import { mergeCitizenReports } from '@/lib/citizen';
@@ -158,11 +160,7 @@ export default function GlobeExperience() {
   const [statsOpen, setStatsOpen] = useState(false);
 
   const [alertsOpen, setAlertsOpen] = useState(false);
-  const [alertSettings, setAlertSettings] = useState<AlertSettings>({
-    enabled: false,
-    countryIds: [],
-    browserNotifications: false,
-  });
+  const [alertSettings, setAlertSettings] = useState<AlertSettings>(defaultAlertSettings);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>('default');
 
   const knownIds = useRef<Set<string>>(new Set());
@@ -175,6 +173,7 @@ export default function GlobeExperience() {
   const emscKeyRef = useRef('');
   const alertSettingsRef = useRef(alertSettings);
   const countryBboxesRef = useRef<CountryBbox[]>([]);
+  const alertIndexRef = useRef<CountryIndex | null>(null);
   const selectedCountryIdRef = useRef<string | null>(null);
   const selectedPlateRef = useRef<SelectedPlate | null>(null);
   const lastZoomCheck = useRef(0);
@@ -247,33 +246,25 @@ export default function GlobeExperience() {
   }, [countries]);
   countryBboxesRef.current = countryBboxes;
 
+  // Alerts use the same country rule as the statistics and the list (territory, or
+  // the nearest coast within 200 km at sea), with the detailed borders once loaded.
   const checkAlerts = useCallback((fresh: QuakeFeature[]) => {
     const settings = alertSettingsRef.current;
-    if (!settings.enabled || fresh.length === 0) return;
-
-    const watchIds = new Set(settings.countryIds);
-    let matched: QuakeFeature | null = null;
-    let matchedCountryName: string | undefined;
-
-    for (const q of fresh) {
-      if (watchIds.size === 0) {
-        matched = q; // no specific countries chosen => watch everywhere
-        break;
-      }
-      const hit = countryBboxesRef.current.find(
-        (c) => watchIds.has(c.id) && isInBbox(q.lng, q.lat, padBbox(c.bbox, 1.5))
-      );
-      if (hit) {
-        matched = q;
-        matchedCountryName = hit.name;
-        break;
-      }
-    }
-
-    if (matched) {
-      setAlertToastQuake(matched);
-      if (settings.browserNotifications) notifyQuake(matched, matchedCountryName);
-    }
+    const hit = pickAlert(
+      fresh,
+      settings,
+      (q) => {
+        const index = alertIndexRef.current;
+        if (!index) return null;
+        const id = countryOf(index, q.lng, q.lat);
+        if (id === null) return null;
+        return { id, name: countryBboxesRef.current.find((c) => c.id === id)?.name ?? id };
+      },
+      new Date()
+    );
+    if (!hit) return;
+    setAlertToastQuake(hit.quake);
+    if (settings.browserNotifications) notifyQuake(hit.quake, hit.countryName);
   }, []);
 
   const handleNewQuakes = useCallback(
@@ -493,8 +484,11 @@ export default function GlobeExperience() {
     };
   }, [selectedCountry]);
 
+  // The detailed borders are needed once a country is in focus, and also for alerts
+  // on specific countries (so a quake is attributed exactly as the statistics do).
+  const needsDetailedBorders = !!selectedCountry || (alertSettings.enabled && alertSettings.countryIds.length > 0);
   useEffect(() => {
-    if (!selectedCountry || detailedIndex) return;
+    if (!needsDetailedBorders || detailedIndex) return;
     let cancelled = false;
     loadDetailedCountryIndex()
       .then((index) => {
@@ -504,9 +498,10 @@ export default function GlobeExperience() {
     return () => {
       cancelled = true;
     };
-  }, [selectedCountry, detailedIndex]);
+  }, [needsDetailedBorders, detailedIndex]);
 
   const coarseIndex = useMemo(() => (countries ? buildCountryIndex(countries.features ?? []) : null), [countries]);
+  alertIndexRef.current = detailedIndex ?? coarseIndex;
 
   const selectCountry = useCallback(async (feature: any, opts: { animate: boolean; altitude?: number }) => {
     const id = String(feature.id);
