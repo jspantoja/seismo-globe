@@ -619,3 +619,20 @@ html, body {
 }
 @keyframes user-pulse { 0% { transform: scale(0.4); opacity: 0.9; } 100% { transform: scale(1.5); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .user-marker__pulse { animation: none; opacity: 0.5; } }
+
+/* ---------- earthquake dots (lib/quakeLayer.ts): hover label and cursor ---------- */
+.quake-tip {
+  position: absolute;
+  z-index: 5;
+  width: max-content;
+  max-width: max(50%, 150px);
+  padding: 3px 5px;
+  border-radius: 3px;
+  font: 12px sans-serif;
+  color: #eee;
+  background: rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.quake-hover canvas { cursor: pointer; }
+/* one label at a time: the dot's, not the country's beneath it */
+.quake-hover .float-tooltip-kap { display: none !important; }

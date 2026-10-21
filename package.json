@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json",
-    "test": "tsx tests/emsc.test.mts && tsx tests/resilience.test.mts && tsx tests/urlState.test.mts && tsx tests/countryAttribution.test.mts && tsx tests/nearby.test.mts && tsx tests/alerts.test.mts"
+    "test": "tsx tests/emsc.test.mts && tsx tests/resilience.test.mts && tsx tests/urlState.test.mts && tsx tests/countryAttribution.test.mts && tsx tests/nearby.test.mts && tsx tests/alerts.test.mts && tsx tests/quakeLayer.test.mts"
   },
   "dependencies": {
     "next": "^16.3.6",
@@ -23,6 +23,7 @@
     "@types/node": "^22.15.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/three": "^0.186.0",
     "@types/topojson-client": "^3.1.5",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"

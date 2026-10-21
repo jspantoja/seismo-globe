@@ -52,6 +52,15 @@ se avisa del de mayor magnitud. Un sismo sin magnitud publicada solo avisa si el
 Los ajustes guardados por versiones anteriores se migran sin perder nada (`parseAlertSettings` en
 `lib/alerts.ts`). Las alertas funcionan solo mientras la pestaña esté abierta: no hay envío en segundo plano.
 
+## Cómo se dibujan los sismos
+
+Todos los sismos son una sola malla instanciada (`lib/quakeLayer.ts`): una llamada de dibujo para
+todo el conjunto, en lugar de una por sismo como en la capa de puntos de `react-globe.gl`. Con un
+mes de datos (~10 000 sismos) pasa de ~11 700 a ~1 700 llamadas por fotograma (el resto es el mapa:
+países, límites de placa y anillos). El hover y el clic no usan trazado de rayos: se proyecta cada
+sismo a pantalla y gana el más cercano al puntero entre los que miran a la cámara (~0,5 ms para
+20 000 sismos). Mismo aspecto: prismas sobre la superficie, color por magnitud y tamaño según el zoom.
+
 ## Enlaces compartibles
 
 La dirección de la página refleja la vista, así que copiar el enlace comparte lo que se ve:

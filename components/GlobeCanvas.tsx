@@ -5,15 +5,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BoundaryPath, QuakeFeature } from '@/lib/types';
 import { magColor, sourceLabel } from '@/lib/format';
 import { pointScaleFor } from '@/lib/globeView';
-
-/** The globe renders point labels as HTML; place names come from third-party feeds. */
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
-}
+import { QuakeInstances, type QuakeLayerStyle } from '@/lib/quakeLayer';
 
 const Globe = dynamic(() => import('react-globe.gl'), { ssr: false });
 
 const FLIGHT_MS = 1200; // length of a programmatic camera flight
+
+// Earthquakes are one instanced mesh (lib/quakeLayer.ts) with the look the library's own points had.
+const QUAKE_STYLE: QuakeLayerStyle = {
+  altitude: 0.018,
+  radiusDeg: (q) => Math.max(0.2, (q.mag ?? 1) * 0.15),
+  color: (q) => magColor(q.mag),
+  resolution: 8,
+};
+const HOVER_SLOP_PX = 4; // extra reach around a dot for a mouse
+const TOUCH_SLOP_PX = 12; // ... and for a finger
+const CLICK_MOVE_PX = 5; // a press that moves further than this was a drag, not a click
+
+/** Text of a quake's hover label (plain text: place names come from third-party feeds). */
+function quakeTipText(q: QuakeFeature): string {
+  return `M ${q.mag ?? '?'} — ${q.place ?? 'ubicación desconocida'}${q.source === 'USGS' ? '' : ` (${sourceLabel(q.source)})`}${
+    q.citizen ? ` · 👥 ${q.citizen.reports} reportes` : ''
+  }`;
+}
 
 // The app's own copy (scripts/fetch-assets.mjs) is used unless it fails to load.
 const EARTH_TEXTURE_LOCAL = '/data/earth-dark.jpg';
@@ -100,6 +114,114 @@ export default function GlobeCanvas({
     };
   }, []);
 
+  // ---- Earthquakes: one instanced mesh, with our own hover / click picking ----------------
+  const layerRef = useRef<QuakeInstances<QuakeFeature> | null>(null);
+  const pointScaleRef = useRef(pointScale);
+  pointScaleRef.current = pointScale;
+  const quakesRef = useRef(quakes);
+  quakesRef.current = quakes;
+  const onQuakeClickRef = useRef(onQuakeClick);
+  onQuakeClickRef.current = onQuakeClick;
+  // The library resolves a click over a dot to the country beneath it; this flag (raised for the
+  // frame in which a dot was clicked) tells onPolygonClick to ignore that.
+  const dotClickRef = useRef(false);
+  const hideTipRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (!globeReady || !globeRef.current) return;
+    const globe = globeRef.current;
+    const canvas: HTMLCanvasElement = globe.renderer().domElement;
+    const host = canvas.parentElement;
+    if (!host) return;
+
+    const layer = new QuakeInstances<QuakeFeature>(globe.scene(), QUAKE_STYLE);
+    layerRef.current = layer;
+    layer.update(quakesRef.current, pointScaleRef.current);
+
+    const tip = document.createElement('div');
+    tip.className = 'quake-tip';
+    tip.style.display = 'none';
+    host.appendChild(tip);
+
+    const pickAt = (ev: PointerEvent) => {
+      const r = canvas.getBoundingClientRect();
+      const x = ev.clientX - r.left;
+      const y = ev.clientY - r.top;
+      const slop = ev.pointerType === 'mouse' ? HOVER_SLOP_PX : TOUCH_SLOP_PX;
+      return { x, y, w: r.width, quake: layer.quakeAt(layer.pick(globe.camera(), r.width, r.height, x, y, slop)) };
+    };
+
+    const hideTip = () => {
+      tip.style.display = 'none';
+      host.classList.remove('quake-hover');
+    };
+    hideTipRef.current = hideTip;
+
+    let frame = 0;
+    let lastMove: PointerEvent | null = null;
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerType !== 'mouse') return;
+      if (ev.buttons !== 0) return hideTip(); // dragging the globe
+      lastMove = ev;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (!lastMove) return;
+        const { x, y, w, quake } = pickAt(lastMove);
+        if (!quake) return hideTip();
+        tip.textContent = quakeTipText(quake);
+        tip.style.display = 'block';
+        host.classList.add('quake-hover');
+        const width = tip.offsetWidth;
+        tip.style.left = `${x + 14 + width > w ? Math.max(0, x - 14 - width) : x + 14}px`;
+        tip.style.top = `${y + 14}px`;
+      });
+    };
+
+    let down: { x: number; y: number } | null = null;
+    const onDown = (ev: PointerEvent) => {
+      down = { x: ev.clientX, y: ev.clientY };
+      hideTip();
+    };
+    const onUp = (ev: PointerEvent) => {
+      const start = down;
+      down = null;
+      if (ev.button !== 0 || !start) return;
+      if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > (ev.pointerType === 'mouse' ? CLICK_MOVE_PX : CLICK_MOVE_PX * 2)) return;
+      const { quake } = pickAt(ev);
+      if (!quake) return;
+      dotClickRef.current = true;
+      // The library handles the same click in a frame callback queued before this one runs, so
+      // clearing the flag in a later callback of the same frame covers it exactly.
+      requestAnimationFrame(() => {
+        dotClickRef.current = false;
+      });
+      onQuakeClickRef.current(quake);
+    };
+
+    canvas.addEventListener('pointermove', onMove, { passive: true });
+    canvas.addEventListener('pointerdown', onDown, { passive: true });
+    canvas.addEventListener('pointerup', onUp, { passive: true });
+    canvas.addEventListener('pointerleave', hideTip, { passive: true });
+
+    return () => {
+      canvas.removeEventListener('pointermove', onMove);
+      canvas.removeEventListener('pointerdown', onDown);
+      canvas.removeEventListener('pointerup', onUp);
+      canvas.removeEventListener('pointerleave', hideTip);
+      cancelAnimationFrame(frame);
+      hideTipRef.current = () => {};
+      tip.remove();
+      host.classList.remove('quake-hover');
+      layer.dispose();
+      layerRef.current = null;
+    };
+  }, [globeReady]);
+
+  useEffect(() => {
+    layerRef.current?.update(quakes, pointScale);
+  }, [quakes, pointScale, globeReady]);
+
   const countryFeatures = useMemo(
     () => (countries?.features ?? []).filter((f: any) => f.properties?.name !== 'Antarctica'),
     [countries]
@@ -143,8 +265,6 @@ export default function GlobeCanvas({
   // Arrow marker over each brand-new quake. The element factory must keep a
   // stable identity (the layer rebuilds every element when it changes), so the
   // click handler is reached through a ref.
-  const onQuakeClickRef = useRef(onQuakeClick);
-  onQuakeClickRef.current = onQuakeClick;
   const arrowElement = useCallback((d: any) => {
     if (d.__user) {
       const marker = document.createElement('div');
@@ -209,6 +329,7 @@ export default function GlobeCanvas({
       atmosphereColor="#4fd1c5"
       atmosphereAltitude={0.15}
       onZoom={(pov: any) => {
+        hideTipRef.current(); // the globe moved under a resting pointer: the label is stale
         onZoomChange(pov);
         setPointScale(pointScaleFor(pov.altitude)); // no re-render unless the step changes
       }}
@@ -241,6 +362,7 @@ export default function GlobeCanvas({
       onPolygonClick={(d: any) => {
         // Subdivisions are informational; countries (including the neighbours
         // shown around a selected country) can be clicked to switch to them.
+        if (dotClickRef.current) return; // the click was on an earthquake lying over this country
         if (!d.properties?.__sub && !d.properties?.__plate) onCountryClick(d);
       }}
       // Tectonic plate boundaries — emphasized layer, color-coded by type
@@ -254,24 +376,7 @@ export default function GlobeCanvas({
           : `Límite de placas: ${d.plateA} — ${d.plateB}${d.boundaryType === 'subduction' ? ' (zona de subducción)' : ''}`
       }
       pathTransitionDuration={0}
-      // Earthquakes — flat points instead of tall extruded columns.
-      // NOTE: pointsMerge was tried here for performance but broke individual
-      // onPointClick hit-testing in practice (clicks fell through to the
-      // polygon layer beneath), so it's intentionally left off — clicking a
-      // quake to see its details matters more than the merge's GPU savings.
-      pointsData={quakes}
-      pointLat={(d: any) => d.lat}
-      pointLng={(d: any) => d.lng}
-      pointColor={(d: any) => magColor(d.mag)}
-      pointAltitude={0.018}
-      pointRadius={(d: any) => Math.max(0.2, (d.mag ?? 1) * 0.15) * pointScale}
-      pointResolution={8}
-      pointLabel={(d: any) =>
-        `M ${d.mag ?? '?'} — ${escapeHtml(String(d.place ?? 'ubicación desconocida'))}${
-          d.source === 'USGS' ? '' : ` (${sourceLabel(d.source)})`
-        }${d.citizen ? ` · 👥 ${d.citizen.reports} reportes` : ''}`
-      }
-      onPointClick={(d: any) => onQuakeClick(d as QuakeFeature)}
+      // Earthquakes are drawn by QuakeInstances (see above), not by the library's points layer.
       // Seismic pulse animation — the "puntos con animación de sismo" layer
       ringsData={rings}
       ringLat={(d: any) => d.lat}
