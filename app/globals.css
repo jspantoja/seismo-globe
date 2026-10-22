@@ -636,3 +636,12 @@ html, body {
 .quake-hover canvas { cursor: pointer; }
 /* one label at a time: the dot's, not the country's beneath it */
 .quake-hover .float-tooltip-kap { display: none !important; }
+
+/* ---- Motor gráfico: laboratorio (temporal) ---- */
+.engine-lab { position: fixed; inset: 0; background: radial-gradient(ellipse at 50% 40%, #0a1226 0%, #02040a 70%); }
+.engine-lab-host { position: absolute; inset: 0; }
+.engine-lab-hud { position: absolute; left: 12px; top: 10px; margin: 0; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #9fb3c8; pointer-events: none; white-space: pre; }
+.engine-lab-bar { position: absolute; left: 0; right: 0; bottom: 14px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 0 12px; }
+.engine-lab-bar button { font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 999px; border: 1px solid #28405c; background: rgba(10, 20, 38, 0.8); color: #d6e4f2; cursor: pointer; }
+.engine-lab-bar button:hover { background: rgba(30, 60, 100, 0.85); }
+.engine-lab-error { position: absolute; inset: 0; display: grid; place-items: center; color: #f5b3b3; margin: 0; }
