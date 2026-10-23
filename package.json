@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json",
-    "test": "tsx tests/emsc.test.mts && tsx tests/resilience.test.mts && tsx tests/urlState.test.mts && tsx tests/countryAttribution.test.mts && tsx tests/nearby.test.mts && tsx tests/alerts.test.mts && tsx tests/quakeLayer.test.mts && tsx tests/engineMath.test.mts && tsx tests/engineCamera.test.mts"
+    "test": "tsx tests/emsc.test.mts && tsx tests/resilience.test.mts && tsx tests/urlState.test.mts && tsx tests/countryAttribution.test.mts && tsx tests/nearby.test.mts && tsx tests/alerts.test.mts && tsx tests/quakeLayer.test.mts && tsx tests/engineMath.test.mts && tsx tests/engineCamera.test.mts && tsx tests/engineEarcut.test.mts && tsx tests/engineTessellate.test.mts && tsx tests/engineAreas.test.mts"
   },
   "dependencies": {
     "next": "^16.3.6",

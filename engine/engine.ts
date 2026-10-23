@@ -33,7 +33,15 @@ export interface FrameContext {
   now: number;
 }
 
+/** What a layer can ask of the engine that holds it. */
+export interface LayerHost {
+  /** Draw a new frame (many requests in the same tick draw once). */
+  requestRender(): void;
+}
+
 export interface EngineLayer {
+  /** Called when the layer is added: keep `host` to ask for a frame when the layer's data changes. */
+  attach?(host: LayerHost): void;
   /**
    * Called once the GL context exists and again, with the new context, after a lost one comes back:
    * (re)build GPU resources here from data kept on the CPU. Handles from before the loss are dead:
@@ -171,6 +179,7 @@ export class GlobeEngine {
 
   addLayer(layer: EngineLayer): void {
     this.layers.push(layer);
+    layer.attach?.({ requestRender: () => this.requestRender() });
     if (!this.lost) layer.init(this.gl);
     this.requestRender();
   }

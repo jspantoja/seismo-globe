@@ -103,3 +103,133 @@ void main() {
   gl_FragDepth = coverage > 0.5 ? clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0) : 1.0;
 }
 `;
+
+// ---------------------------------------------------------------------------
+// Layers lying on the surface (fills, lines). Positions arrive as a (high, low) pair of float32
+// vectors that add up to the exact float64 position; the camera position is split the same way and
+// subtracted *before* anything else ("relative to eye"). The difference is small and exact, so
+// vertices do not tremble however close the camera gets. These layers do not use the depth buffer:
+// they are drawn in order, and a per-vertex "horizon" value (> 0 when the point faces the camera,
+// linear, so it interpolates exactly) hides what is on the far side of the planet.
+// ---------------------------------------------------------------------------
+
+export const FILL_VERT = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 a_hi;
+layout(location = 1) in vec3 a_lo;
+layout(location = 2) in vec4 a_color;
+uniform mat4 u_mvp;      // projection * rotation
+uniform vec3 u_eyeHi;
+uniform vec3 u_eyeLo;
+uniform vec3 u_eye;      // camera position
+uniform float u_bias;    // |eye|^2 - 1
+out vec4 v_color;
+out float v_h;
+void main() {
+  vec3 rel = (a_hi - u_eyeHi) + (a_lo - u_eyeLo);
+  v_h = dot(rel, u_eye) + u_bias;
+  v_color = a_color;
+  gl_Position = u_mvp * vec4(rel, 1.0);
+}
+`;
+
+export const FILL_FRAG = `#version 300 es
+precision highp float;
+in vec4 v_color;
+in float v_h;
+out vec4 outColor;
+void main() {
+  float visible = clamp(v_h / max(fwidth(v_h), 1e-9) + 0.5, 0.0, 1.0);
+  float a = v_color.a * visible;
+  outColor = vec4(v_color.rgb * a, a);
+}
+`;
+
+// One instance per line segment; four vertices (a strip) per instance.
+export const LINE_VERT = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 i_p0Hi;
+layout(location = 1) in vec3 i_p0Lo;
+layout(location = 2) in vec3 i_p1Hi;
+layout(location = 3) in vec3 i_p1Lo;
+layout(location = 4) in vec3 i_prev;
+layout(location = 5) in vec3 i_next;
+layout(location = 6) in float i_width;
+layout(location = 7) in vec4 i_color;
+uniform mat4 u_mvp;
+uniform vec3 u_eyeHi;
+uniform vec3 u_eyeLo;
+uniform vec3 u_eye;
+uniform float u_bias;
+uniform vec2 u_viewport;  // CSS pixels
+uniform float u_pixel;    // one device pixel, in CSS pixels
+out vec4 v_color;
+out float v_h;
+out float v_across;
+out float v_half;
+
+vec2 toScreen(vec4 c) { return c.xy / c.w * 0.5 * u_viewport; }
+
+void main() {
+  int corner = gl_VertexID;
+  float side = (corner & 1) == 0 ? -1.0 : 1.0;
+  bool atEnd = corner >= 2;
+
+  vec3 r0 = (i_p0Hi - u_eyeHi) + (i_p0Lo - u_eyeLo);
+  vec3 r1 = (i_p1Hi - u_eyeHi) + (i_p1Lo - u_eyeLo);
+  vec4 c0 = u_mvp * vec4(r0, 1.0);
+  vec4 c1 = u_mvp * vec4(r1, 1.0);
+  vec4 cp = u_mvp * vec4(i_prev - u_eyeHi, 1.0);
+  vec4 cn = u_mvp * vec4(i_next - u_eyeHi, 1.0);
+  vec2 s0 = toScreen(c0);
+  vec2 s1 = toScreen(c1);
+  vec2 sp = toScreen(cp);
+  vec2 sn = toScreen(cn);
+
+  vec2 seg = s1 - s0;
+  float segLen = length(seg);
+  vec2 d = segLen > 1e-6 ? seg / segLen : vec2(1.0, 0.0);
+
+  // Direction of the neighbour segment at this end, and the miter between the two.
+  vec2 other = atEnd ? (sn - s1) : (s0 - sp);
+  float otherLen = length(other);
+  vec2 dOther = otherLen > 1e-6 ? other / otherLen : d;
+  vec2 t = d + dOther;
+  float tLen = length(t);
+  t = tLen > 1e-4 ? t / tLen : d;
+  vec2 normal = vec2(-d.y, d.x);
+  vec2 miter = vec2(-t.y, t.x);
+  float scale = 1.0 / max(dot(miter, normal), 0.25);
+
+  float halfWidth = 0.5 * i_width;
+  float reach = halfWidth + u_pixel; // one device pixel of margin for the soft edge
+  vec2 pos = (atEnd ? s1 : s0) + miter * side * reach * scale;
+  vec4 c = atEnd ? c1 : c0;
+  vec3 r = atEnd ? r1 : r0;
+
+  gl_Position = vec4(pos / (0.5 * u_viewport) * c.w, c.z, c.w);
+  v_h = dot(r, u_eye) + u_bias;
+  v_color = i_color;
+  v_across = side * reach;
+  v_half = halfWidth;
+}
+`;
+
+export const LINE_FRAG = `#version 300 es
+precision highp float;
+in vec4 v_color;
+in float v_h;
+in float v_across;
+in float v_half;
+uniform float u_pixel;
+out vec4 outColor;
+void main() {
+  // Exact coverage of a one-pixel box filter by the stripe [-half, +half]: thin lines get dim, not jagged.
+  float lo = max(v_across - 0.5 * u_pixel, -v_half);
+  float hi = min(v_across + 0.5 * u_pixel, v_half);
+  float coverage = clamp((hi - lo) / u_pixel, 0.0, 1.0);
+  float visible = clamp(v_h / max(fwidth(v_h), 1e-9) + 0.5, 0.0, 1.0);
+  float a = v_color.a * coverage * visible;
+  outColor = vec4(v_color.rgb * a, a);
+}
+`;

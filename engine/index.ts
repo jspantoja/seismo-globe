@@ -1,5 +1,8 @@
 export { GlobeEngine, EngineUnsupportedError } from './engine';
-export type { EngineLayer, EngineOptions, EngineStats, FrameContext } from './engine';
+export type { EngineLayer, EngineOptions, EngineStats, FrameContext, LayerHost } from './engine';
+export { AreaLayer, LineLayer, distanceToArc } from './surface';
+export type { LineSpec } from './surface';
+export type { AreaSpec } from './areas';
 export { GlobeCamera, FOV_Y, degreesBetween } from './camera';
 export type { Pov, ScreenPoint } from './camera';
 export { GlobeControls } from './controls';

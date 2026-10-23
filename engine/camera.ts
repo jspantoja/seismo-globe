@@ -94,6 +94,10 @@ export class GlobeCamera {
   private viewProjWidth = 0;
   private viewProjHeight = 0;
   private invViewProjCache = new Float32Array(16);
+  private rotProjCache = new Float32Array(16);
+  private rotProjVersion = -1;
+  private rotProjWidth = 0;
+  private rotProjHeight = 0;
 
   constructor() {
     this.setPov({ lat: 0, lng: 0, altitude: 2.5 });
@@ -206,6 +210,34 @@ export class GlobeCamera {
     this.viewProjWidth = this.width;
     this.viewProjHeight = this.height;
     return this.viewProjCache;
+  }
+
+  /**
+   * Projection × rotation, without the camera's translation. Used with positions made relative to
+   * the camera in the shader (see eyeSplit), which keeps vertices exact at any zoom.
+   */
+  rotationProjection(): Float32Array {
+    if (this.rotProjVersion === this.version && this.rotProjWidth === this.width && this.rotProjHeight === this.height) {
+      return this.rotProjCache;
+    }
+    const { near, far } = this.clipPlanes();
+    const proj = perspective(this.fovY, this.aspect, near, far);
+    const rot = viewFromBasis(this.right, this.up, this.back, [0, 0, 0]);
+    multiply(proj, rot, this.rotProjCache);
+    this.rotProjVersion = this.version;
+    this.rotProjWidth = this.width;
+    this.rotProjHeight = this.height;
+    return this.rotProjCache;
+  }
+
+  /** The camera position as two float32 vectors that add up to its float64 value. */
+  eyeSplit(hi: Float32Array = new Float32Array(3), lo: Float32Array = new Float32Array(3)): { hi: Float32Array; lo: Float32Array } {
+    const e = this.position();
+    for (let k = 0; k < 3; k++) {
+      hi[k] = e[k];
+      lo[k] = e[k] - hi[k];
+    }
+    return { hi, lo };
   }
 
   /** The ray through a screen position (CSS pixels). The direction is a unit vector. */
