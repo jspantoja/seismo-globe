@@ -233,3 +233,149 @@ void main() {
   outColor = vec4(v_color.rgb * a, a);
 }
 `;
+
+// ---------------------------------------------------------------------------
+// Earthquakes: one instance per quake, drawing a small prism that stands on the surface. Opaque and
+// depth-tested (against the globe, which writes its own depth), so a prism behind the planet is
+// hidden and one on the near side shows its full height at the limb. The position reaches the GPU as
+// a (high, low) pair and is made relative to the camera first, like the surface layers, so a prism
+// does not tremble at any zoom.
+// ---------------------------------------------------------------------------
+
+export const QUAKE_VERT = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 a_local;   // x, y on the unit circle; z along the height (0 base, 1 top)
+layout(location = 1) in vec3 a_normal;  // the face normal in the same local frame
+layout(location = 2) in vec3 i_hi;
+layout(location = 3) in vec3 i_lo;
+layout(location = 4) in float i_radius; // radians of arc, before the zoom scale
+layout(location = 5) in vec4 i_color;   // sRGB
+uniform mat4 u_mvp;
+uniform vec3 u_eyeHi;
+uniform vec3 u_eyeLo;
+uniform float u_scale;
+uniform float u_height;
+uniform vec3 u_light;
+out vec3 v_color;
+
+vec3 toLinear(vec3 c) {
+  vec3 lo = c / 12.92;
+  vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
+  return mix(lo, hi, step(vec3(0.04045), c));
+}
+vec3 toSrgb(vec3 c) {
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+  return mix(lo, hi, step(vec3(0.0031308), c));
+}
+
+void main() {
+  vec3 n = normalize(i_hi);
+  vec3 axis = abs(n.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+  vec3 t1 = normalize(cross(axis, n));
+  vec3 t2 = cross(n, t1);
+  float r = i_radius * u_scale;
+  vec3 offset = (t1 * a_local.x + t2 * a_local.y) * r + n * (a_local.z * u_height);
+  vec3 rel = (i_hi - u_eyeHi) + (i_lo - u_eyeLo) + offset;
+  gl_Position = u_mvp * vec4(rel, 1.0);
+
+  vec3 wn = t1 * a_normal.x + t2 * a_normal.y + n * a_normal.z;
+  float shade = 0.8 + 0.45 * max(dot(wn, u_light), 0.0);
+  v_color = toSrgb(toLinear(i_color.rgb) * shade);
+}
+`;
+
+export const QUAKE_FRAG = `#version 300 es
+precision highp float;
+in vec3 v_color;
+out vec4 outColor;
+void main() {
+  outColor = vec4(clamp(v_color, 0.0, 1.0), 1.0);
+}
+`;
+
+// ---------------------------------------------------------------------------
+// Pulsing rings. A ring is a circle of angular radius rho around a quake, drawn as a ribbon of
+// constant width in pixels. Nothing is uploaded per frame: each instance (one ring "slot" of one
+// quake) knows when it was born, and the shader works out its age, radius and fade from the clock.
+// The ribbon is a triangle strip with `u_segments` steps around the circle; the fragment stage is
+// the line one (soft one-pixel edges, hidden beyond the horizon).
+// ---------------------------------------------------------------------------
+
+export const RING_VERT = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 i_hi;
+layout(location = 1) in vec3 i_lo;
+layout(location = 2) in vec4 i_time;   // birth offset (ms), cycle (ms), life (ms), final radius (radians)
+layout(location = 3) in float i_start; // clock time (ms) before which this slot stays hidden
+layout(location = 4) in vec4 i_color;
+uniform mat4 u_mvp;
+uniform vec3 u_eyeHi;
+uniform vec3 u_eyeLo;
+uniform vec3 u_eye;
+uniform float u_bias;
+uniform vec2 u_viewport;
+uniform float u_pixel;
+uniform float u_time;      // the clock in ms, wrapped so that float32 stays exact for ever
+uniform float u_clock;     // the clock in ms, not wrapped (only compared with birth times)
+uniform float u_segments;
+uniform float u_width;     // CSS pixels
+uniform float u_alpha;     // peak opacity
+out vec4 v_color;
+out float v_h;
+out float v_across;
+out float v_half;
+
+vec2 toScreen(vec4 c) { return c.xy / c.w * 0.5 * u_viewport; }
+
+void main() {
+  float age = mod(u_time + i_time.x, i_time.y);
+  float life = i_time.z;
+  if (age >= life || u_clock - age < i_start - 0.5) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // outside the clip volume: the whole strip vanishes
+    v_color = vec4(0.0);
+    v_h = 0.0;
+    v_across = 0.0;
+    v_half = 0.0;
+    return;
+  }
+  float f = age / life;
+  float rho = i_time.w * f;
+
+  int k = gl_VertexID;
+  float side = (k & 1) == 0 ? -1.0 : 1.0;
+  float dTheta = 6.283185307179586 / u_segments;
+  float th = float(k >> 1) * dTheta;
+
+  vec3 n = normalize(i_hi);
+  vec3 axis = abs(n.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+  vec3 t1 = normalize(cross(axis, n));
+  vec3 t2 = cross(n, t1);
+  vec3 centre = (i_hi - u_eyeHi) + (i_lo - u_eyeLo);
+  float sr = sin(rho);
+  float sh = sin(0.5 * rho);
+  vec3 lift = n * (-2.0 * sh * sh); // cos(rho) - 1 without cancellation
+
+  vec3 rel = centre + lift + (t1 * cos(th) + t2 * sin(th)) * sr;
+  vec3 relPrev = centre + lift + (t1 * cos(th - dTheta) + t2 * sin(th - dTheta)) * sr;
+  vec3 relNext = centre + lift + (t1 * cos(th + dTheta) + t2 * sin(th + dTheta)) * sr;
+  vec4 c = u_mvp * vec4(rel, 1.0);
+  vec2 s = toScreen(c);
+  vec2 sp = toScreen(u_mvp * vec4(relPrev, 1.0));
+  vec2 sn = toScreen(u_mvp * vec4(relNext, 1.0));
+
+  vec2 tangent = sn - sp;
+  float tl = length(tangent);
+  tangent = tl > 1e-6 ? tangent / tl : vec2(1.0, 0.0);
+  vec2 normal = vec2(-tangent.y, tangent.x);
+
+  float halfWidth = 0.5 * u_width;
+  float reach = halfWidth + u_pixel;
+  vec2 pos = s + normal * side * reach;
+  gl_Position = vec4(pos / (0.5 * u_viewport) * c.w, c.z, c.w);
+  v_h = dot(rel, u_eye) + u_bias;
+  v_color = vec4(i_color.rgb, (1.0 - f) * u_alpha);
+  v_across = side * reach;
+  v_half = halfWidth;
+}
+`;

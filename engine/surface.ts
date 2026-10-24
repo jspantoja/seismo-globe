@@ -13,7 +13,7 @@ import { FILL_FRAG, FILL_VERT, LINE_FRAG, LINE_VERT } from './shaders';
 
 const SURFACE_UNIFORMS = ['u_mvp', 'u_eyeHi', 'u_eyeLo', 'u_eye', 'u_bias'];
 
-function setSurfaceState(gl: WebGL2RenderingContext): void {
+export function setSurfaceState(gl: WebGL2RenderingContext): void {
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied alpha
   gl.disable(gl.DEPTH_TEST);
@@ -24,7 +24,7 @@ function setSurfaceState(gl: WebGL2RenderingContext): void {
 const scratchHi = new Float32Array(3);
 const scratchLo = new Float32Array(3);
 
-function setSurfaceUniforms(gl: WebGL2RenderingContext, prog: Program, frame: FrameContext): void {
+export function setSurfaceUniforms(gl: WebGL2RenderingContext, prog: Program, frame: FrameContext): void {
   const u = prog.uniforms;
   const cam = frame.camera;
   const eye = cam.position();

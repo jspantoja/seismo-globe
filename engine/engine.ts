@@ -37,6 +37,11 @@ export interface FrameContext {
 export interface LayerHost {
   /** Draw a new frame (many requests in the same tick draw once). */
   requestRender(): void;
+  /**
+   * A transparent element laid over the canvas, the same size, for layers made of HTML (markers).
+   * It lets pointer events through; a layer's own elements opt back in with `pointer-events: auto`.
+   */
+  readonly overlay: HTMLElement;
 }
 
 export interface EngineLayer {
@@ -83,6 +88,8 @@ const PLACEHOLDER_RGB: [number, number, number] = [10, 18, 34];
 
 export class GlobeEngine {
   readonly canvas: HTMLCanvasElement;
+  /** Holds HTML laid over the canvas (see LayerHost.overlay). */
+  readonly overlay: HTMLElement;
   readonly camera = new GlobeCamera();
   readonly controls: GlobeControls;
   readonly stats: EngineStats = { frames: 0, drawCalls: 0, cpuMs: 0, fps: 0, contextLosses: 0 };
@@ -146,6 +153,12 @@ export class GlobeEngine {
     if (options.countDrawCalls) this.countDraws(gl);
 
     container.appendChild(canvas);
+    if (typeof getComputedStyle === 'function' && getComputedStyle(container).position === 'static') container.style.position = 'relative';
+    const overlay = document.createElement('div');
+    overlay.setAttribute('data-engine', 'overlay');
+    overlay.style.cssText = 'position:absolute;left:0;top:0;right:0;bottom:0;overflow:hidden;pointer-events:none;';
+    container.appendChild(overlay);
+    this.overlay = overlay;
     canvas.addEventListener('webglcontextlost', this.onContextLost);
     canvas.addEventListener('webglcontextrestored', this.onContextRestored);
 
@@ -179,7 +192,7 @@ export class GlobeEngine {
 
   addLayer(layer: EngineLayer): void {
     this.layers.push(layer);
-    layer.attach?.({ requestRender: () => this.requestRender() });
+    layer.attach?.({ requestRender: () => this.requestRender(), overlay: this.overlay });
     if (!this.lost) layer.init(this.gl);
     this.requestRender();
   }
@@ -230,15 +243,18 @@ export class GlobeEngine {
     return this.lost;
   }
 
-  /** Draws immediately (tests and screenshots need the frame now, not on the next tick). */
-  renderNow(): void {
+  /**
+   * Draws immediately (tests and screenshots need the frame now, not on the next tick). `now` is the
+   * frame's clock (performance.now() when omitted): passing it makes animations reproducible.
+   */
+  renderNow(now?: number): void {
     if (this.lost || this.destroyed) return;
-    this.render(performance.now());
+    this.render(now ?? performance.now());
   }
 
   /** Draws now and reads one pixel of the drawing buffer, in CSS pixels from the top-left. RGBA, 0-255, not premultiplied. */
-  readPixel(x: number, y: number): [number, number, number, number] {
-    this.renderNow();
+  readPixel(x: number, y: number, now?: number): [number, number, number, number] {
+    this.renderNow(now);
     const gl = this.gl;
     const px = Math.min(this.canvas.width - 1, Math.max(0, Math.round(x * (this.canvas.width / this.cssWidth))));
     const py = Math.min(this.canvas.height - 1, Math.max(0, Math.round((this.cssHeight - y) * (this.canvas.height / this.cssHeight))));
@@ -272,6 +288,7 @@ export class GlobeEngine {
     // Hand the GPU context back now: browsers allow only a handful of live contexts per page.
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();
     this.canvas.remove();
+    this.overlay.remove();
   }
 
   // ------------------------------------------------------------------ GL resources

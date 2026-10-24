@@ -3,6 +3,12 @@ export type { EngineLayer, EngineOptions, EngineStats, FrameContext, LayerHost }
 export { AreaLayer, LineLayer, distanceToArc } from './surface';
 export type { LineSpec } from './surface';
 export type { AreaSpec } from './areas';
+export { QuakeLayer, prismTemplate, MAX_RADIUS_DEG } from './quakes';
+export type { QuakeLike, QuakeStyle } from './quakes';
+export { RingLayer, ringPlan, ringSlots, ringState, RING_PERIOD_MS, RING_OPACITY } from './rings';
+export type { RingSpec, RingOptions } from './rings';
+export { MarkerLayer, pointVisible } from './markers';
+export type { MarkerSpec } from './markers';
 export { GlobeCamera, FOV_Y, degreesBetween } from './camera';
 export type { Pov, ScreenPoint } from './camera';
 export { GlobeControls } from './controls';

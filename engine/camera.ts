@@ -304,6 +304,34 @@ export class GlobeCamera {
     return out;
   }
 
+  /**
+   * Like `project`, but the point is made relative to the camera in double precision first, so it
+   * stays exact however close the camera is (the matrices are float32). Markers use this.
+   */
+  projectExact(p: Vec3, out: ScreenPoint = { x: 0, y: 0, depth: 0, w: 0 }): ScreenPoint {
+    const e = this.position();
+    const rx = p[0] - e[0];
+    const ry = p[1] - e[1];
+    const rz = p[2] - e[2];
+    const w = -(rx * this.back[0] + ry * this.back[1] + rz * this.back[2]); // distance in front of the camera
+    out.w = w;
+    if (w <= 1e-9) {
+      out.x = NaN;
+      out.y = NaN;
+      out.depth = 2;
+      return out;
+    }
+    const t = Math.tan(this.fovY / 2);
+    const cx = rx * this.right[0] + ry * this.right[1] + rz * this.right[2];
+    const cy = rx * this.up[0] + ry * this.up[1] + rz * this.up[2];
+    out.x = (cx / (w * t * this.aspect) * 0.5 + 0.5) * this.width;
+    out.y = (0.5 - (cy / (w * t)) * 0.5) * this.height;
+    const { near, far } = this.clipPlanes();
+    // The same normalised depth the projection matrix gives.
+    out.depth = ((far + near) / (far - near)) - (2 * far * near) / ((far - near) * w);
+    return out;
+  }
+
   /** True when a point of the unit sphere (scaled by `radius`) faces the camera, i.e. is not behind the horizon. */
   isFacing(unit: Vec3, radius = 1): boolean {
     return dot(this.position(), unit) > radius;
