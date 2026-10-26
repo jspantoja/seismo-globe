@@ -52,14 +52,25 @@ se avisa del de mayor magnitud. Un sismo sin magnitud publicada solo avisa si el
 Los ajustes guardados por versiones anteriores se migran sin perder nada (`parseAlertSettings` en
 `lib/alerts.ts`). Las alertas funcionan solo mientras la pestaña esté abierta: no hay envío en segundo plano.
 
-## Cómo se dibujan los sismos
+## El motor gráfico
 
-Todos los sismos son una sola malla instanciada (`lib/quakeLayer.ts`): una llamada de dibujo para
-todo el conjunto, en lugar de una por sismo como en la capa de puntos de `react-globe.gl`. Con un
-mes de datos (~10 000 sismos) pasa de ~11 700 a ~1 700 llamadas por fotograma (el resto es el mapa:
-países, límites de placa y anillos). El hover y el clic no usan trazado de rayos: se proyecta cada
-sismo a pantalla y gana el más cercano al puntero entre los que miran a la cámara (~0,5 ms para
-20 000 sismos). Mismo aspecto: prismas sobre la superficie, color por magnitud y tamaño según el zoom.
+El globo se dibuja con un motor propio en WebGL2 y TypeScript (`engine/`), sin three.js ni
+`react-globe.gl`: la cámara, los controles táctiles y de teclado, la triangulación de países, los
+rellenos y líneas sobre la superficie, los sismos, los anillos pulsantes y los marcadores HTML son
+código del proyecto, con pruebas propias (`npm test`) y un banco de pruebas en `/engine-lab`.
+
+- **Pocas llamadas de dibujo.** Los países, las placas y las divisiones son capas de superficie
+  (una llamada por capa) y todos los sismos son una sola malla instanciada. Con un mes de datos
+  (~10 000 sismos) son ~6 llamadas por fotograma; la versión con three.js hacía ~1 700.
+- **Dibuja solo cuando hace falta.** Sin movimiento ni animaciones el motor no dibuja nada; con
+  solo anillos activos se limita a 30 fps, y la resolución se limita a 2× de densidad de píxeles.
+- **Precisión al hacer zoom.** Las posiciones se envían como pares (alto, bajo) en coma flotante
+  relativos al ojo, para que los límites no tiemblen a pocos kilómetros de altura.
+- **Hover y clic sin trazado de rayos.** Se proyecta cada sismo a pantalla y gana el más cercano
+  al puntero entre los que miran a la cámara (~0,5 ms para 20 000 sismos).
+- **Pérdida de contexto.** Si el navegador descarta el contexto WebGL, las capas se reconstruyen solas.
+
+Peso del JavaScript de la aplicación (producción, gzip): ~226 KB frente a ~779 KB con three.js.
 
 ## Enlaces compartibles
 
@@ -81,3 +92,6 @@ corre tipos, pruebas y compilación en cada push y pull request.
 - PB2002 es un modelo de 2003.
 - El USGS es completo desde M4.5 fuera de EE. UU.
 - La copia del servidor vive en memoria de cada instancia; se pierde al reiniciarse.
+- El globo necesita WebGL2 (todos los navegadores actuales); sin él se muestra un aviso en lugar del globo.
+- Al elegir un país, triangular su frontera detallada (1:50m) ocupa unos 200 ms del hilo principal.
+- Medidas de rendimiento hechas con GL por software (sin GPU): sirven para llamadas de dibujo y coste de JavaScript, no para fotogramas por segundo.

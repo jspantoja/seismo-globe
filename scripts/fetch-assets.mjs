@@ -37,7 +37,9 @@ const DOWNLOADS = [
   },
 ];
 
-// Copies from npm packages already installed for the build.
+// Copies from npm packages already installed for the build, and from this repository.
+// assets/earth-dark.jpg is the equirectangular night texture of the globe (from the MIT-licensed
+// three-globe examples), kept here so the build depends on no globe library.
 const COPIES = [
   {
     name: 'countries-110m.json',
@@ -49,7 +51,11 @@ const COPIES = [
     from: 'node_modules/world-atlas/countries-50m.json',
     sha256: '04342cdc1e3016bcd7db1630de95684d67b79fe3c8c460321e87aef469502394',
   },
-  { name: 'earth-dark.jpg', from: 'node_modules/three-globe/example/img/earth-dark.jpg' },
+  {
+    name: 'earth-dark.jpg',
+    from: 'assets/earth-dark.jpg',
+    sha256: '8b8f3a4e258428b6e669a0799fb8b6f2db15c6240825d6a7c75963829b576994',
+  },
 ];
 
 async function readIfExists(path) {

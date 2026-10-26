@@ -1,26 +1,41 @@
 'use client';
 
-import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AreaLayer,
+  EngineUnsupportedError,
+  GlobeEngine,
+  LineLayer,
+  MarkerLayer,
+  QuakeLayer,
+  RingLayer,
+  vecToGeo,
+  type AreaSpec,
+  type LineSpec,
+  type MarkerSpec,
+  type QuakeStyle,
+} from '@/engine';
 import type { BoundaryPath, QuakeFeature } from '@/lib/types';
 import { magColor, sourceLabel } from '@/lib/format';
 import { pointScaleFor } from '@/lib/globeView';
-import { QuakeInstances, type QuakeLayerStyle } from '@/lib/quakeLayer';
 
-const Globe = dynamic(() => import('react-globe.gl'), { ssr: false });
+/**
+ * The globe of the app, drawn by the project's own WebGL2 engine (see /engine): the planet, the
+ * countries, the plate boundaries, the earthquakes, the pulsing rings and the HTML markers are layers
+ * of one engine; this component only feeds them data and turns pointer events into the app's actions.
+ */
 
 const FLIGHT_MS = 1200; // length of a programmatic camera flight
 
-// Earthquakes are one instanced mesh (lib/quakeLayer.ts) with the look the library's own points had.
-const QUAKE_STYLE: QuakeLayerStyle = {
+// Earthquakes: a prism standing on the surface, its radius in degrees of arc by magnitude.
+const QUAKE_STYLE: QuakeStyle<QuakeFeature> = {
   altitude: 0.018,
   radiusDeg: (q) => Math.max(0.2, (q.mag ?? 1) * 0.15),
   color: (q) => magColor(q.mag),
-  resolution: 8,
 };
 const HOVER_SLOP_PX = 4; // extra reach around a dot for a mouse
 const TOUCH_SLOP_PX = 12; // ... and for a finger
-const CLICK_MOVE_PX = 5; // a press that moves further than this was a drag, not a click
+const LINE_PICK_DEG = 0.25; // how close to a boundary the pointer must be, per unit of (altitude + 0.05)
 
 /** Text of a quake's hover label (plain text: place names come from third-party feeds). */
 function quakeTipText(q: QuakeFeature): string {
@@ -30,14 +45,32 @@ function quakeTipText(q: QuakeFeature): string {
 }
 
 // The app's own copy (scripts/fetch-assets.mjs) is used unless it fails to load.
-const EARTH_TEXTURE_LOCAL = '/data/earth-dark.jpg';
-const EARTH_TEXTURE_CDN = 'https://cdn.jsdelivr.net/npm/three-globe@2.31.1/example/img/earth-dark.jpg';
+const EARTH_TEXTURES = ['/data/earth-dark.jpg', 'https://cdn.jsdelivr.net/npm/three-globe@2.31.1/example/img/earth-dark.jpg'];
+
+const COUNTRY_FILL = 'rgba(110, 140, 180, 0.12)';
+const COUNTRY_STROKE = 'rgba(180, 200, 225, 0.4)';
+const SELECTED_FILL = 'rgba(79, 209, 197, 0.28)';
+const SELECTED_STROKE = '#4fd1c5';
+const PLATE_FILL = 'rgba(144, 133, 233, 0.24)';
+const SUBDIVISION_STROKE = 'rgba(231, 236, 245, 0.6)';
 
 function subdivisionColor(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
   const hue = hash % 360;
   return `hsla(${hue}, 55%, 55%, 0.28)`;
+}
+
+function boundaryColor(type: string): string {
+  return type === 'near-radius' ? '#60a5fa' : type === 'subduction' ? '#ff8a3d' : '#7dd3fc';
+}
+function boundaryWidth(type: string): number {
+  return type === 'near-radius' ? 1.5 : type === 'subduction' ? 1.6 : 1.1;
+}
+function boundaryLabel(p: BoundaryPath): string {
+  return p.boundaryType === 'near-radius'
+    ? `Radio de ${p.plateA} km`
+    : `Límite de placas: ${p.plateA} — ${p.plateB}${p.boundaryType === 'subduction' ? ' (zona de subducción)' : ''}`;
 }
 
 export interface FlyTo {
@@ -71,6 +104,31 @@ interface Props {
   radiusRing?: BoundaryPath | null; // circle drawn around the marker
 }
 
+type AreaKind = 'country' | 'sub' | 'plate';
+interface AreaData {
+  kind: AreaKind;
+  feature: any;
+}
+interface LineData {
+  label: string;
+}
+
+interface Layers {
+  engine: GlobeEngine;
+  areas: AreaLayer<AreaData>;
+  lines: LineLayer<LineData>;
+  rings: RingLayer;
+  quakes: QuakeLayer<QuakeFeature>;
+  markers: MarkerLayer;
+}
+
+declare global {
+  interface Window {
+    /** Diagnostic hook: the globe's engine and layers (used by the browser tests). */
+    __seismoGlobe?: Layers;
+  }
+}
+
 export default function GlobeCanvas({
   countries,
   boundaries,
@@ -89,199 +147,219 @@ export default function GlobeCanvas({
   userMarker = null,
   radiusRing = null,
 }: Props) {
-  const globeRef = useRef<any>(null);
-  // The globe is loaded lazily: a camera flight requested before it exists
-  // (e.g. a country taken from a shared link) is applied as soon as it does.
-  const [globeReady, setGlobeReady] = useState(false);
-  const [pointScale, setPointScale] = useState(1);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const layersRef = useRef<Layers | null>(null);
+  // The engine is created after mount; the data effects below wait for it, and a camera flight
+  // requested before it exists (e.g. a country taken from a shared link) is applied as soon as it does.
+  const [ready, setReady] = useState(false);
+  const [unsupported, setUnsupported] = useState(false);
+
+  // Latest callbacks, reachable from the engine's long-lived handlers.
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
   const onFlightStartRef = useRef(onFlightStart);
   onFlightStartRef.current = onFlightStart;
-  const handleGlobeReady = useCallback(() => {
-    setGlobeReady(true);
-    onReadyRef.current?.();
-  }, []);
-
-  // Probe the local texture once; if it is missing or broken, switch to the CDN.
-  const [textureUrl, setTextureUrl] = useState(EARTH_TEXTURE_LOCAL);
-  useEffect(() => {
-    const probe = new Image();
-    probe.onerror = () => setTextureUrl(EARTH_TEXTURE_CDN);
-    probe.src = EARTH_TEXTURE_LOCAL;
-    return () => {
-      probe.onerror = null;
-    };
-  }, []);
-
-  // ---- Earthquakes: one instanced mesh, with our own hover / click picking ----------------
-  const layerRef = useRef<QuakeInstances<QuakeFeature> | null>(null);
-  const pointScaleRef = useRef(pointScale);
-  pointScaleRef.current = pointScale;
-  const quakesRef = useRef(quakes);
-  quakesRef.current = quakes;
+  const onZoomChangeRef = useRef(onZoomChange);
+  onZoomChangeRef.current = onZoomChange;
   const onQuakeClickRef = useRef(onQuakeClick);
   onQuakeClickRef.current = onQuakeClick;
-  // The library resolves a click over a dot to the country beneath it; this flag (raised for the
-  // frame in which a dot was clicked) tells onPolygonClick to ignore that.
-  const dotClickRef = useRef(false);
-  const hideTipRef = useRef<() => void>(() => {});
+  const onCountryClickRef = useRef(onCountryClick);
+  onCountryClickRef.current = onCountryClick;
 
+  // ---- The engine, its layers, the label and the pointer handling ------------------------------
   useEffect(() => {
-    if (!globeReady || !globeRef.current) return;
-    const globe = globeRef.current;
-    const canvas: HTMLCanvasElement = globe.renderer().domElement;
-    const host = canvas.parentElement;
+    const host = hostRef.current;
     if (!host) return;
+    let engine: GlobeEngine;
+    try {
+      engine = new GlobeEngine(host, { textureUrls: EARTH_TEXTURES, atmosphereColor: '#4fd1c5', atmosphereAltitude: 0.15 });
+    } catch (err) {
+      if (!(err instanceof EngineUnsupportedError)) console.error(err);
+      setUnsupported(true);
+      onReadyRef.current?.(); // the rest of the app does not need the globe
+      return;
+    }
+    engine.canvas.setAttribute('aria-label', 'Globo terráqueo interactivo con los sismos recientes');
 
-    const layer = new QuakeInstances<QuakeFeature>(globe.scene(), QUAKE_STYLE);
-    layerRef.current = layer;
-    layer.update(quakesRef.current, pointScaleRef.current);
+    const areas = new AreaLayer<AreaData>();
+    const lines = new LineLayer<LineData>();
+    const rings = new RingLayer();
+    const quakeLayer = new QuakeLayer<QuakeFeature>(QUAKE_STYLE);
+    const markers = new MarkerLayer();
+    // Drawing order: the map, the rings on the ground, the quakes standing on it, then HTML.
+    engine.addLayer(areas);
+    engine.addLayer(lines);
+    engine.addLayer(rings);
+    engine.addLayer(quakeLayer);
+    engine.addLayer(markers);
+
+    const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)');
+    rings.setAnimated(!(reducedMotion && reducedMotion.matches));
 
     const tip = document.createElement('div');
-    tip.className = 'quake-tip';
+    tip.className = 'globe-tip';
     tip.style.display = 'none';
     host.appendChild(tip);
-
-    const pickAt = (ev: PointerEvent) => {
-      const r = canvas.getBoundingClientRect();
-      const x = ev.clientX - r.left;
-      const y = ev.clientY - r.top;
-      const slop = ev.pointerType === 'mouse' ? HOVER_SLOP_PX : TOUCH_SLOP_PX;
-      return { x, y, w: r.width, quake: layer.quakeAt(layer.pick(globe.camera(), r.width, r.height, x, y, slop)) };
-    };
-
+    let tipVisible = false;
     const hideTip = () => {
+      if (!tipVisible) return;
+      tipVisible = false;
       tip.style.display = 'none';
-      host.classList.remove('quake-hover');
+      engine.setCursor(null);
     };
-    hideTipRef.current = hideTip;
-
-    let frame = 0;
-    let lastMove: PointerEvent | null = null;
-    const onMove = (ev: PointerEvent) => {
-      if (ev.pointerType !== 'mouse') return;
-      if (ev.buttons !== 0) return hideTip(); // dragging the globe
-      lastMove = ev;
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        if (!lastMove) return;
-        const { x, y, w, quake } = pickAt(lastMove);
-        if (!quake) return hideTip();
-        tip.textContent = quakeTipText(quake);
-        tip.style.display = 'block';
-        host.classList.add('quake-hover');
-        const width = tip.offsetWidth;
-        tip.style.left = `${x + 14 + width > w ? Math.max(0, x - 14 - width) : x + 14}px`;
-        tip.style.top = `${y + 14}px`;
-      });
+    const showTip = (text: string, x: number, y: number, clickable: boolean) => {
+      tipVisible = true;
+      tip.textContent = text;
+      tip.style.display = 'block';
+      const width = tip.offsetWidth;
+      const host_w = host.clientWidth;
+      tip.style.left = `${x + 14 + width > host_w ? Math.max(0, x - 14 - width) : x + 14}px`;
+      tip.style.top = `${y + 14}px`;
+      engine.setCursor(clickable ? 'pointer' : null);
     };
 
-    let down: { x: number; y: number } | null = null;
-    const onDown = (ev: PointerEvent) => {
-      down = { x: ev.clientX, y: ev.clientY };
-      hideTip();
-    };
-    const onUp = (ev: PointerEvent) => {
-      const start = down;
-      down = null;
-      if (ev.button !== 0 || !start) return;
-      if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > (ev.pointerType === 'mouse' ? CLICK_MOVE_PX : CLICK_MOVE_PX * 2)) return;
-      const { quake } = pickAt(ev);
-      if (!quake) return;
-      dotClickRef.current = true;
-      // The library handles the same click in a frame callback queued before this one runs, so
-      // clearing the flag in a later callback of the same frame covers it exactly.
-      requestAnimationFrame(() => {
-        dotClickRef.current = false;
-      });
-      onQuakeClickRef.current(quake);
+    const slopFor = (ev?: PointerEvent) => (ev && ev.pointerType !== 'mouse' ? TOUCH_SLOP_PX : HOVER_SLOP_PX);
+    const geoAt = (x: number, y: number) => {
+      const hit = engine.camera.hitSphere(x, y);
+      return hit ? vecToGeo(hit) : null;
     };
 
-    canvas.addEventListener('pointermove', onMove, { passive: true });
-    canvas.addEventListener('pointerdown', onDown, { passive: true });
-    canvas.addEventListener('pointerup', onUp, { passive: true });
-    canvas.addEventListener('pointerleave', hideTip, { passive: true });
+    engine.setEvents({
+      hover: (pos, ev) => {
+        if (!pos) return hideTip();
+        const quake = quakeLayer.pickQuake(engine.camera, pos.x, pos.y, slopFor(ev));
+        if (quake) return showTip(quakeTipText(quake), pos.x, pos.y, true);
+        const g = geoAt(pos.x, pos.y);
+        if (!g) return hideTip();
+        const near = lines.pickNear(g.lat, g.lng, LINE_PICK_DEG * (engine.camera.altitude + 0.05));
+        if (near?.spec.data) return showTip(near.spec.data.label, pos.x, pos.y, false);
+        const area = areas.pick(g.lat, g.lng);
+        if (!area?.data) return hideTip();
+        const p = area.data.feature?.properties ?? {};
+        const label = area.data.kind === 'plate' ? `Placa ${p.PlateName ?? ''}` : area.data.kind === 'sub' ? `${p.name ?? ''}${p.type ? ` (${p.type})` : ''}` : `${p.name ?? ''}`;
+        showTip(label, pos.x, pos.y, area.data.kind === 'country');
+      },
+      tap: (x, y, ev) => {
+        hideTip();
+        const quake = quakeLayer.pickQuake(engine.camera, x, y, slopFor(ev));
+        if (quake) return onQuakeClickRef.current(quake);
+        const g = geoAt(x, y);
+        if (!g) return;
+        // Subdivisions and plates are informational; a country (including the neighbours shown
+        // around a selected one) can be clicked to switch to it.
+        const area = areas.pick(g.lat, g.lng);
+        if (area?.data?.kind === 'country') onCountryClickRef.current(area.data.feature);
+      },
+      interact: (active) => {
+        if (active) hideTip();
+      },
+    });
+
+    engine.onPov = (pov) => {
+      hideTip(); // the globe moved under a resting pointer: the label is stale
+      quakeLayer.setScale(pointScaleFor(pov.altitude)); // a uniform: free
+      onZoomChangeRef.current(pov);
+    };
+    quakeLayer.setScale(pointScaleFor(engine.camera.altitude));
+
+    const layers: Layers = { engine, areas, lines, rings, quakes: quakeLayer, markers };
+    layersRef.current = layers;
+    window.__seismoGlobe = layers;
+    setReady(true);
+    onReadyRef.current?.();
 
     return () => {
-      canvas.removeEventListener('pointermove', onMove);
-      canvas.removeEventListener('pointerdown', onDown);
-      canvas.removeEventListener('pointerup', onUp);
-      canvas.removeEventListener('pointerleave', hideTip);
-      cancelAnimationFrame(frame);
-      hideTipRef.current = () => {};
+      if (window.__seismoGlobe === layers) delete window.__seismoGlobe;
+      layersRef.current = null;
+      setReady(false);
       tip.remove();
-      host.classList.remove('quake-hover');
-      layer.dispose();
-      layerRef.current = null;
+      engine.destroy();
     };
-  }, [globeReady]);
+  }, []);
 
-  useEffect(() => {
-    layerRef.current?.update(quakes, pointScale);
-  }, [quakes, pointScale, globeReady]);
-
-  const countryFeatures = useMemo(
+  // ---- Map: countries, a selected country's subdivisions, a selected plate -----------------------
+  const countryFeatures = useMemo<any[]>(
     () => (countries?.features ?? []).filter((f: any) => f.properties?.name !== 'Antarctica'),
     [countries]
   );
+  // A selected country's own administrative divisions replace that country's outline, while its
+  // neighbours stay visible (and clickable) around it.
+  const showingSubdivisions = (subdivisions?.length ?? 0) > 0;
+  // The selected plate is drawn as a translucent polygon *below* the countries, so they stay
+  // hoverable and clickable on top of it.
+  useEffect(() => {
+    const L = layersRef.current;
+    if (!L || !ready) return;
+    const specs: AreaSpec<AreaData>[] = [];
+    if (selectedPlate?.geometry) {
+      specs.push({ key: 'plate', geometry: selectedPlate.geometry, fill: PLATE_FILL, order: 0, data: { kind: 'plate', feature: selectedPlate } });
+    }
+    for (const f of countryFeatures) {
+      const id = String(f.id);
+      if (showingSubdivisions && id === selectedCountryId) continue; // replaced by its subdivisions
+      const selected = !showingSubdivisions && id === selectedCountryId;
+      specs.push({
+        key: `c:${id}`,
+        geometry: f.geometry,
+        fill: selected ? SELECTED_FILL : COUNTRY_FILL,
+        stroke: selected ? SELECTED_STROKE : COUNTRY_STROKE,
+        strokeWidth: selected ? 1.5 : 1,
+        order: selected ? 3 : 1,
+        data: { kind: 'country', feature: f },
+      });
+    }
+    (subdivisions ?? []).forEach((f: any, i: number) => {
+      specs.push({
+        key: `s:${i}`,
+        geometry: f.geometry,
+        fill: subdivisionColor(f.properties?.name ?? ''),
+        stroke: SUBDIVISION_STROKE,
+        strokeWidth: 1,
+        order: 2,
+        data: { kind: 'sub', feature: f },
+      });
+    });
+    L.areas.setAreas(specs);
+  }, [ready, countryFeatures, subdivisions, showingSubdivisions, selectedCountryId, selectedPlate]);
 
-  // A selected country's own administrative divisions replace that country's
-  // outline, while its neighbours stay visible (and clickable) around it.
-  const subdivisionFeatures = useMemo(
-    () =>
-      (subdivisions ?? []).map((f: any) => ({ ...f, properties: { ...f.properties, __sub: true } })),
-    [subdivisions]
-  );
-  const showingSubdivisions = subdivisionFeatures.length > 0;
-  // The selected plate is drawn as a translucent polygon *below* the country
-  // layer (lower altitude), so countries stay hoverable/clickable on top of it.
-  const plateFeature = useMemo(
-    () => (selectedPlate ? { ...selectedPlate, properties: { ...selectedPlate.properties, __plate: true } } : null),
-    [selectedPlate]
-  );
-  const polygons = useMemo(() => {
-    const base = showingSubdivisions
-      ? [...countryFeatures.filter((f: any) => String(f.id) !== selectedCountryId), ...subdivisionFeatures]
-      : countryFeatures;
-    return plateFeature ? [plateFeature, ...base] : base;
-  }, [showingSubdivisions, countryFeatures, subdivisionFeatures, selectedCountryId, plateFeature]);
+  // ---- Plate boundaries and the "near me" circle -------------------------------------------------
+  useEffect(() => {
+    const L = layersRef.current;
+    if (!L || !ready) return;
+    const specs: LineSpec<LineData>[] = [];
+    for (const p of radiusRing ? [...boundaries, radiusRing] : boundaries) {
+      if (p.coords.length < 2) continue;
+      const points = new Float64Array(p.coords.length * 2);
+      p.coords.forEach(([lat, lng], i) => {
+        points[i * 2] = lng;
+        points[i * 2 + 1] = lat;
+      });
+      specs.push({ points, color: boundaryColor(p.boundaryType), width: boundaryWidth(p.boundaryType), data: { label: boundaryLabel(p) } });
+    }
+    L.lines.setLines(specs);
+  }, [ready, boundaries, radiusRing]);
 
-  // Pulsing "seismic" rings — capped set (see parent) so the animation cost
-  // stays bounded regardless of how many quakes are currently displayed.
-  const rings = useMemo(
-    () =>
+  // ---- Earthquakes ---------------------------------------------------------------------------------
+  useEffect(() => {
+    layersRef.current?.quakes.setQuakes(quakes);
+  }, [ready, quakes]);
+
+  // Pulsing seismic rings — a capped set (see parent) so the cost stays bounded however many quakes are shown.
+  useEffect(() => {
+    layersRef.current?.rings.setRings(
       pulseQuakes.map((q) => ({
+        key: q.id,
         lat: q.lat,
         lng: q.lng,
-        maxR: Math.max(2.5, (q.mag ?? 3) * 1.6),
+        maxRadiusDeg: Math.max(2.5, (q.mag ?? 3) * 1.6),
+        speedDegPerSec: Math.max(0.6, (q.mag ?? 3) * 0.5),
         color: magColor(q.mag),
-        speed: Math.max(0.6, (q.mag ?? 3) * 0.5),
-      })),
-    [pulseQuakes]
-  );
+      }))
+    );
+  }, [ready, pulseQuakes]);
 
-  // Arrow marker over each brand-new quake. The element factory must keep a
-  // stable identity (the layer rebuilds every element when it changes), so the
-  // click handler is reached through a ref.
-  const arrowElement = useCallback((d: any) => {
-    if (d.__user) {
-      const marker = document.createElement('div');
-      marker.className = 'user-marker';
-      marker.setAttribute('role', 'img');
-      marker.setAttribute('aria-label', d.label);
-      const pulse = document.createElement('span');
-      pulse.className = 'user-marker__pulse';
-      const dot = document.createElement('span');
-      dot.className = 'user-marker__dot';
-      const label = document.createElement('span');
-      label.className = 'user-marker__label';
-      label.textContent = d.label;
-      marker.append(pulse, dot, label);
-      return marker;
-    }
-    const q = d as QuakeFeature;
+  // ---- Markers: an arrow over each brand-new quake, and "you are here" -------------------------------
+  const arrowElement = useCallback((q: QuakeFeature) => {
     const root = document.createElement('div');
     root.className = 'quake-arrow';
     root.style.setProperty('--arrow-color', magColor(q.mag));
@@ -304,95 +382,54 @@ export default function GlobeCanvas({
     return root;
   }, []);
 
-  // Arrow markers for brand-new quakes, plus the "you are here" marker when there is one.
-  const htmlElements = useMemo(
-    () => (userMarker ? [...freshQuakes, { __user: true, id: '__user', ...userMarker }] : freshQuakes),
-    [freshQuakes, userMarker]
-  );
-  const paths = useMemo(() => (radiusRing ? [...boundaries, radiusRing] : boundaries), [boundaries, radiusRing]);
-
   useEffect(() => {
-    if (flyTo && globeReady && globeRef.current) {
-      // The flight starts only now (the request may have waited for the globe or a busy
+    const L = layersRef.current;
+    if (!L || !ready) return;
+    const specs: MarkerSpec[] = freshQuakes.map((q) => ({ id: `q:${q.id}`, lat: q.lat, lng: q.lng, create: () => arrowElement(q) }));
+    if (userMarker) {
+      const { lat, lng, label } = userMarker;
+      specs.push({
+        id: `user:${lat},${lng},${label}`,
+        lat,
+        lng,
+        create: () => {
+          const marker = document.createElement('div');
+          marker.className = 'user-marker';
+          marker.setAttribute('role', 'img');
+          marker.setAttribute('aria-label', label);
+          const pulse = document.createElement('span');
+          pulse.className = 'user-marker__pulse';
+          const dot = document.createElement('span');
+          dot.className = 'user-marker__dot';
+          const text = document.createElement('span');
+          text.className = 'user-marker__label';
+          text.textContent = label;
+          marker.append(pulse, dot, text);
+          return marker;
+        },
+      });
+    }
+    L.markers.setMarkers(specs);
+  }, [ready, freshQuakes, userMarker, arrowElement]);
+
+  // ---- Camera flights --------------------------------------------------------------------------------
+  useEffect(() => {
+    const L = layersRef.current;
+    if (flyTo && ready && L) {
+      // The flight starts only now (the request may have waited for the engine or a busy
       // main thread), so the parent's "ignore camera events during a flight" window starts now too.
       onFlightStartRef.current?.(FLIGHT_MS);
-      globeRef.current.pointOfView({ lat: flyTo.lat, lng: flyTo.lng, altitude: flyTo.altitude }, FLIGHT_MS);
+      L.engine.flyTo({ lat: flyTo.lat, lng: flyTo.lng, altitude: flyTo.altitude }, FLIGHT_MS);
     }
-  }, [flyTo, globeReady]);
+  }, [flyTo, ready]);
 
   return (
-    <Globe
-      ref={globeRef}
-      onGlobeReady={handleGlobeReady}
-      globeImageUrl={textureUrl}
-      backgroundColor="rgba(0,0,0,0)"
-      atmosphereColor="#4fd1c5"
-      atmosphereAltitude={0.15}
-      onZoom={(pov: any) => {
-        hideTipRef.current(); // the globe moved under a resting pointer: the label is stale
-        onZoomChange(pov);
-        setPointScale(pointScaleFor(pov.altitude)); // no re-render unless the step changes
-      }}
-      // Country borders (or a selected country's own subdivisions)
-      polygonsData={polygons}
-      polygonsTransitionDuration={220}
-      polygonCapColor={(d: any) => {
-        if (d.properties?.__plate) return 'rgba(144, 133, 233, 0.24)';
-        if (d.properties?.__sub) return subdivisionColor(d.properties?.name ?? '');
-        if (!showingSubdivisions && String(d.id) === selectedCountryId) return 'rgba(79, 209, 197, 0.28)';
-        return 'rgba(110, 140, 180, 0.12)';
-      }}
-      polygonSideColor={() => 'rgba(0,0,0,0)'}
-      polygonStrokeColor={(d: any) => {
-        if (d.properties?.__plate) return 'rgba(0,0,0,0)';
-        if (d.properties?.__sub) return 'rgba(231, 236, 245, 0.6)';
-        if (!showingSubdivisions && String(d.id) === selectedCountryId) return '#4fd1c5';
-        return 'rgba(180, 200, 225, 0.4)';
-      }}
-      polygonAltitude={(d: any) =>
-        d.properties?.__plate ? 0.002 : d.properties?.__sub ? 0.004 : !showingSubdivisions && String(d.id) === selectedCountryId ? 0.01 : 0.003
-      }
-      polygonLabel={(d: any) =>
-        d.properties?.__plate
-          ? `Placa ${d.properties?.PlateName ?? ''}`
-          : d.properties?.__sub
-          ? `${d.properties?.name ?? ''}${d.properties?.type ? ` (${d.properties.type})` : ''}`
-          : `${d.properties?.name ?? ''}`
-      }
-      onPolygonClick={(d: any) => {
-        // Subdivisions are informational; countries (including the neighbours
-        // shown around a selected country) can be clicked to switch to them.
-        if (dotClickRef.current) return; // the click was on an earthquake lying over this country
-        if (!d.properties?.__sub && !d.properties?.__plate) onCountryClick(d);
-      }}
-      // Tectonic plate boundaries — emphasized layer, color-coded by type
-      pathsData={paths}
-      pathPoints={(d: any) => d.coords}
-      pathColor={(d: any) => (d.boundaryType === 'near-radius' ? '#60a5fa' : d.boundaryType === 'subduction' ? '#ff8a3d' : '#7dd3fc')}
-      pathStroke={(d: any) => (d.boundaryType === 'near-radius' ? 0.5 : d.boundaryType === 'subduction' ? 0.55 : 0.35)}
-      pathLabel={(d: any) =>
-        d.boundaryType === 'near-radius'
-          ? `Radio de ${d.plateA} km`
-          : `Límite de placas: ${d.plateA} — ${d.plateB}${d.boundaryType === 'subduction' ? ' (zona de subducción)' : ''}`
-      }
-      pathTransitionDuration={0}
-      // Earthquakes are drawn by QuakeInstances (see above), not by the library's points layer.
-      // Seismic pulse animation — the "puntos con animación de sismo" layer
-      ringsData={rings}
-      ringLat={(d: any) => d.lat}
-      ringLng={(d: any) => d.lng}
-      ringMaxRadius={(d: any) => d.maxR}
-      ringResolution={32}
-      ringColor={(d: any) => (t: number) => `${d.color}${Math.floor((1 - t) * 200).toString(16).padStart(2, '0')}`}
-      ringPropagationSpeed={(d: any) => d.speed}
-      ringRepeatPeriod={1100}
-      // "Nuevo sismo" arrow marker (HTML layer; only a handful of fresh events)
-      htmlElementsData={htmlElements}
-      htmlLat={(d: any) => d.lat}
-      htmlLng={(d: any) => d.lng}
-      htmlAltitude={0.02}
-      htmlElement={arrowElement}
-      htmlTransitionDuration={0}
-    />
+    <div ref={hostRef} className="globe-host">
+      {unsupported && (
+        <div className="globe-unsupported" role="alert">
+          Tu navegador no admite WebGL 2, necesario para el globo 3D. La lista de sismos, las estadísticas y las alertas siguen funcionando.
+        </div>
+      )}
+    </div>
   );
 }

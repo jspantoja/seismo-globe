@@ -33,7 +33,7 @@ import {
 } from '@/lib/alerts';
 import { mergeCitizenReports } from '@/lib/citizen';
 import { fetchJsonFirst } from '@/lib/assets';
-import { buildCountryIndex, countryOf, queryBoxesFor, type CountryIndex } from '@/lib/countryAttribution';
+import { buildCountryIndex, countryIdOf, countryOf, queryBoxesFor, type CountryIndex } from '@/lib/countryAttribution';
 import { loadDetailedCountryIndex } from '@/lib/countryIndexClient';
 import { DEFAULT_RADIUS_KM, flightAltitudeFor, nearbyQuakes, radiusPath, type LatLng } from '@/lib/nearby';
 import { describeLocateError, getPosition } from '@/lib/geolocate';
@@ -206,6 +206,9 @@ export default function GlobeExperience() {
         if (cancelled) return;
         const { feature } = await import('topojson-client');
         const fc = feature(topology, topology.objects.countries) as any;
+        // A few disputed territories (Kosovo, Somaliland, N. Cyprus) carry no ISO id:
+        // give them the same stable id the country index uses so keys never collide.
+        for (const f of fc.features ?? []) if (f.id === undefined || f.id === null) f.id = countryIdOf(f);
         setCountries(fc);
       })
       .catch(() => {});

@@ -620,8 +620,9 @@ html, body {
 @keyframes user-pulse { 0% { transform: scale(0.4); opacity: 0.9; } 100% { transform: scale(1.5); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .user-marker__pulse { animation: none; opacity: 0.5; } }
 
-/* ---------- earthquake dots (lib/quakeLayer.ts): hover label and cursor ---------- */
-.quake-tip {
+/* ---------- the globe (components/GlobeCanvas.tsx): host, hover label, no-WebGL notice ---------- */
+.globe-host { position: absolute; inset: 0; }
+.globe-tip {
   position: absolute;
   z-index: 5;
   width: max-content;
@@ -633,9 +634,21 @@ html, body {
   background: rgba(0, 0, 0, 0.6);
   pointer-events: none;
 }
-.quake-hover canvas { cursor: pointer; }
-/* one label at a time: the dot's, not the country's beneath it */
-.quake-hover .float-tooltip-kap { display: none !important; }
+.globe-unsupported {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: min(420px, 86vw);
+  padding: 14px 16px;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text);
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid var(--panel-border);
+}
 
 /* ---- Motor gráfico: laboratorio (temporal) ---- */
 .engine-lab { position: fixed; inset: 0; background: radial-gradient(ellipse at 50% 40%, #0a1226 0%, #02040a 70%); }
