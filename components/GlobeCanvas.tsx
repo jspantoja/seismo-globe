@@ -17,7 +17,7 @@ import {
 } from '@/engine';
 import type { BoundaryPath, QuakeFeature } from '@/lib/types';
 import { magColor, sourceLabel } from '@/lib/format';
-import { pointScaleFor } from '@/lib/globeView';
+import { DETAIL_PRELOAD_ALTITUDE, pointScaleFor, wantsDetail } from '@/lib/globeView';
 
 /**
  * The globe of the app, drawn by the project's own WebGL2 engine (see /engine): the planet, the
@@ -87,6 +87,10 @@ export interface Pov {
 
 interface Props {
   countries: any | null;
+  /** The 1:50m country features, once loaded: drawn instead of `countries` when the camera is close. */
+  detailedCountries?: any[] | null;
+  /** The camera came close enough that the detailed borders will be wanted: start loading them. */
+  onNeedDetail?: () => void;
   boundaries: BoundaryPath[];
   quakes: QuakeFeature[];
   pulseQuakes: QuakeFeature[];
@@ -131,6 +135,8 @@ declare global {
 
 export default function GlobeCanvas({
   countries,
+  detailedCountries = null,
+  onNeedDetail,
   boundaries,
   quakes,
   pulseQuakes,
@@ -153,6 +159,11 @@ export default function GlobeCanvas({
   // requested before it exists (e.g. a country taken from a shared link) is applied as soon as it does.
   const [ready, setReady] = useState(false);
   const [unsupported, setUnsupported] = useState(false);
+  // Level of detail: the camera asks for the fine borders (wantFine) and they are used once prepared (fineReady).
+  const [wantFine, setWantFine] = useState(false);
+  const [fineReady, setFineReady] = useState(false);
+  const wantFineRef = useRef(false);
+  const detailAskedRef = useRef(false);
 
   // Latest callbacks, reachable from the engine's long-lived handlers.
   const onReadyRef = useRef(onReady);
@@ -165,6 +176,8 @@ export default function GlobeCanvas({
   onQuakeClickRef.current = onQuakeClick;
   const onCountryClickRef = useRef(onCountryClick);
   onCountryClickRef.current = onCountryClick;
+  const onNeedDetailRef = useRef(onNeedDetail);
+  onNeedDetailRef.current = onNeedDetail;
 
   // ---- The engine, its layers, the label and the pointer handling ------------------------------
   useEffect(() => {
@@ -258,6 +271,15 @@ export default function GlobeCanvas({
     engine.onPov = (pov) => {
       hideTip(); // the globe moved under a resting pointer: the label is stale
       quakeLayer.setScale(pointScaleFor(pov.altitude)); // a uniform: free
+      const fine = wantsDetail(pov.altitude, wantFineRef.current);
+      if (fine !== wantFineRef.current) {
+        wantFineRef.current = fine;
+        setWantFine(fine); // re-renders only when the camera crosses the threshold
+      }
+      if (!detailAskedRef.current && pov.altitude < DETAIL_PRELOAD_ALTITUDE) {
+        detailAskedRef.current = true;
+        onNeedDetailRef.current?.();
+      }
       onZoomChangeRef.current(pov);
     };
     quakeLayer.setScale(pointScaleFor(engine.camera.altitude));
@@ -282,6 +304,15 @@ export default function GlobeCanvas({
     () => (countries?.features ?? []).filter((f: any) => f.properties?.name !== 'Antarctica'),
     [countries]
   );
+  // The same countries (same ids, so selection and clicks mean the same) with their 1:50m outlines.
+  const fineCountryFeatures = useMemo<any[] | null>(() => {
+    if (!detailedCountries || countryFeatures.length === 0) return null;
+    const fineById = new Map<string, any>();
+    for (const f of detailedCountries) fineById.set(String(f.id), f);
+    return countryFeatures.map((f) => fineById.get(String(f.id)) ?? f);
+  }, [countryFeatures, detailedCountries]);
+  const detailActive = wantFine && fineReady && fineCountryFeatures !== null;
+  const shownCountries = detailActive ? fineCountryFeatures : countryFeatures;
   // A selected country's own administrative divisions replace that country's outline, while its
   // neighbours stay visible (and clickable) around it.
   const showingSubdivisions = (subdivisions?.length ?? 0) > 0;
@@ -294,7 +325,7 @@ export default function GlobeCanvas({
     if (selectedPlate?.geometry) {
       specs.push({ key: 'plate', geometry: selectedPlate.geometry, fill: PLATE_FILL, order: 0, data: { kind: 'plate', feature: selectedPlate } });
     }
-    for (const f of countryFeatures) {
+    for (const f of shownCountries ?? countryFeatures) {
       const id = String(f.id);
       if (showingSubdivisions && id === selectedCountryId) continue; // replaced by its subdivisions
       const selected = !showingSubdivisions && id === selectedCountryId;
@@ -320,7 +351,33 @@ export default function GlobeCanvas({
       });
     });
     L.areas.setAreas(specs);
-  }, [ready, countryFeatures, subdivisions, showingSubdivisions, selectedCountryId, selectedPlate]);
+  }, [ready, countryFeatures, shownCountries, subdivisions, showingSubdivisions, selectedCountryId, selectedPlate]);
+
+  // The fine borders are triangulated and outlined ahead of time, in short slices that leave the
+  // main thread free, so that switching to them is only a copy.
+  useEffect(() => {
+    const L = layersRef.current;
+    setFineReady(false);
+    if (!L || !ready || !fineCountryFeatures) return;
+    let cancelled = false;
+    const specs: AreaSpec<AreaData>[] = fineCountryFeatures.map((f) => ({
+      key: `c:${String(f.id)}`,
+      geometry: f.geometry,
+      fill: COUNTRY_FILL,
+      stroke: COUNTRY_STROKE,
+      strokeWidth: 1,
+      order: 1,
+    }));
+    L.areas
+      .prepare(specs, { cancelled: () => cancelled })
+      .then(() => {
+        if (!cancelled) setFineReady(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, fineCountryFeatures]);
 
   // ---- Plate boundaries and the "near me" circle -------------------------------------------------
   useEffect(() => {

@@ -35,6 +35,7 @@ import { mergeCitizenReports } from '@/lib/citizen';
 import { fetchJsonFirst } from '@/lib/assets';
 import { buildCountryIndex, countryIdOf, countryOf, queryBoxesFor, type CountryIndex } from '@/lib/countryAttribution';
 import { loadDetailedCountryIndex } from '@/lib/countryIndexClient';
+import { loadDetailedCountryFeatures } from '@/lib/countryDetail';
 import { DEFAULT_RADIUS_KM, flightAltitudeFor, nearbyQuakes, radiusPath, type LatLng } from '@/lib/nearby';
 import { describeLocateError, getPosition } from '@/lib/geolocate';
 import { loadLastQuakes, saveLastQuakes } from '@/lib/localCache';
@@ -110,6 +111,9 @@ export default function GlobeExperience() {
   const [countries, setCountries] = useState<any | null>(null);
   // Detailed borders (1:50m), loaded when a country is first selected; until then the globe's own 1:110m ones are used.
   const [detailedIndex, setDetailedIndex] = useState<CountryIndex | null>(null);
+  // The 1:50m country outlines the globe draws when the camera is close (loaded on demand).
+  const [detailFeatures, setDetailFeatures] = useState<any[] | null>(null);
+  const [wantDetail, setWantDetail] = useState(false);
   const [boundaries, setBoundaries] = useState<BoundaryPath[]>([]);
   const [platePolygons, setPlatePolygons] = useState<any[]>([]);
 
@@ -505,6 +509,21 @@ export default function GlobeExperience() {
 
   const coarseIndex = useMemo(() => (countries ? buildCountryIndex(countries.features ?? []) : null), [countries]);
   alertIndexRef.current = detailedIndex ?? coarseIndex;
+
+  // The globe's detailed borders: when the camera comes close, or a country is in focus.
+  useEffect(() => {
+    if (!(wantDetail || selectedCountry) || detailFeatures) return;
+    let cancelled = false;
+    loadDetailedCountryFeatures()
+      .then((features) => {
+        if (!cancelled) setDetailFeatures(features);
+      })
+      .catch(() => {}); // the light borders keep working
+    return () => {
+      cancelled = true;
+    };
+  }, [wantDetail, selectedCountry, detailFeatures]);
+  const handleNeedDetail = useCallback(() => setWantDetail(true), []);
 
   const selectCountry = useCallback(async (feature: any, opts: { animate: boolean; altitude?: number }) => {
     const id = String(feature.id);
@@ -945,6 +964,8 @@ export default function GlobeExperience() {
       <div className="globe-layer">
         <GlobeCanvas
           countries={countries}
+          detailedCountries={detailFeatures}
+          onNeedDetail={handleNeedDetail}
           boundaries={boundaries}
           quakes={displayedQuakes}
           pulseQuakes={pulseQuakes}

@@ -116,6 +116,69 @@ export function onAntimeridian(lng0: number, lng1: number): boolean {
   return on(lng0) && on(lng1);
 }
 
+/**
+ * A set of edge keys (non-negative numbers below 2^53) in typed arrays: open addressing, no
+ * per-entry allocation. `add` reports whether the key was new, so "has, then add" is one probe.
+ */
+export class EdgeSet {
+  private keys: Float64Array;
+  private mask: number;
+  private size = 0;
+
+  constructor(expected = 1024) {
+    let cap = 16;
+    while (cap < expected * 2) cap *= 2;
+    this.keys = new Float64Array(cap).fill(-1);
+    this.mask = cap - 1;
+  }
+
+  /** Forgets every key, keeping room for about `expected` of them. */
+  reset(expected: number): void {
+    let cap = 16;
+    while (cap < expected * 2) cap *= 2;
+    if (cap !== this.keys.length) {
+      this.keys = new Float64Array(cap).fill(-1);
+      this.mask = cap - 1;
+    } else {
+      this.keys.fill(-1);
+    }
+    this.size = 0;
+  }
+
+  get count(): number {
+    return this.size;
+  }
+
+  /** Adds the key; false when it was already there. */
+  add(key: number): boolean {
+    if ((this.size + 1) * 2 > this.keys.length) this.grow();
+    const keys = this.keys;
+    const mask = this.mask;
+    let h = Math.imul(key | 0, 0x9e3779b1);
+    h ^= h >>> 15;
+    let i = h & mask;
+    for (;;) {
+      const k = keys[i];
+      if (k === key) return false;
+      if (k === -1) {
+        keys[i] = key;
+        this.size++;
+        return true;
+      }
+      i = (i + 1) & mask;
+    }
+  }
+
+  private grow(): void {
+    const old = this.keys;
+    const cap = old.length * 2;
+    this.keys = new Float64Array(cap).fill(-1);
+    this.mask = cap - 1;
+    this.size = 0;
+    for (let n = 0; n < old.length; n++) if (old[n] !== -1) this.add(old[n]);
+  }
+}
+
 /** The outlines of a polygon prepared for stroking: the densified chain per ring plus a key and a flag per source edge. */
 export interface RingStroke {
   path: DensePath;
@@ -209,6 +272,18 @@ export class SegmentBuffer {
       this.bytes[b + 3] = color[3];
       this.count++;
     }
+  }
+
+  /** Room for `extra` more segments without growing again. */
+  reserve(extra: number): void {
+    this.ensure(extra);
+  }
+
+  /** Appends segments that were built before (the bytes of another buffer's `view()`). */
+  append(bytes: Uint8Array, count: number): void {
+    this.ensure(count);
+    this.bytes.set(bytes.subarray(0, count * SEGMENT_BYTES), this.count * SEGMENT_BYTES);
+    this.count += count;
   }
 
   /** The filled part of the buffer. */

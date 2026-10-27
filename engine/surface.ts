@@ -1,5 +1,5 @@
 import type { EngineLayer, FrameContext, LayerHost } from './engine';
-import { AreaAssembler, toRgba, type AreaSpec, type AssembleOptions, type AssembledAreas } from './areas';
+import { AreaAssembler, toRgba, type AreaSpec, type AssembleOptions, type AssembledAreas, type PrepareOptions } from './areas';
 import { makeProgram, type Program } from './glcore';
 import { SEGMENT_BYTES, SegmentBuffer, densify, DEFAULT_LINE_STEP_DEG, type DensePath } from './linegeom';
 import { DEG2RAD, RAD2DEG, cross, dot, geoToVec, normalize, vecToGeo, type Vec3 } from './math';
@@ -188,6 +188,15 @@ export class AreaLayer<T = unknown> implements EngineLayer {
     this.assembled = this.assembler.assemble(specs, this.options);
     this.uploaded = false;
     this.host?.requestRender();
+  }
+
+  /**
+   * Does ahead of time, in short slices that leave the main thread free, the heavy work a later
+   * `setAreas` with the same geometries would do (triangulation, outlines). Specs may carry any
+   * colours; what matters are the geometries, the order and which have a fill / an outline.
+   */
+  prepare(specs: AreaSpec<T>[], options: Omit<PrepareOptions, keyof AssembleOptions> = {}): Promise<void> {
+    return this.assembler.prepare(specs, { ...this.options, ...options });
   }
 
   /** The topmost area under a geographic point. */

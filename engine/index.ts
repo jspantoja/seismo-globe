@@ -2,7 +2,7 @@ export { GlobeEngine, EngineUnsupportedError } from './engine';
 export type { EngineLayer, EngineOptions, EngineStats, FrameContext, LayerHost } from './engine';
 export { AreaLayer, LineLayer, distanceToArc } from './surface';
 export type { LineSpec } from './surface';
-export type { AreaSpec } from './areas';
+export type { AreaSpec, PrepareOptions } from './areas';
 export { QuakeLayer, prismTemplate, MAX_RADIUS_DEG } from './quakes';
 export type { QuakeLike, QuakeStyle } from './quakes';
 export { RingLayer, ringPlan, ringSlots, ringState, RING_PERIOD_MS, RING_OPACITY } from './rings';

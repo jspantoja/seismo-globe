@@ -10,3 +10,16 @@ export function pointScaleFor(altitude: number): number {
   const t = Math.min(1, Math.max(0, (altitude - ALTITUDE_NEAR) / (ALTITUDE_FAR - ALTITUDE_NEAR)));
   return Math.round((0.25 + 0.75 * t) * 10) / 10;
 }
+
+/**
+ * Level of detail of the country borders. The globe starts with the light 1:110m set; once the camera
+ * is close enough for its simplification to show (a pixel is about 13 km at altitude 1), it switches to
+ * the 1:50m set. The switch has some hysteresis so a camera resting at the threshold does not flip.
+ */
+export const DETAIL_PRELOAD_ALTITUDE = 1.8; // start fetching and preparing the detailed set
+export const DETAIL_ENTER_ALTITUDE = 1.0; // show it below this when coming in
+export const DETAIL_LEAVE_ALTITUDE = 1.3; // go back to the light set above this when going out
+
+export function wantsDetail(altitude: number, showingDetail: boolean): boolean {
+  return showingDetail ? altitude < DETAIL_LEAVE_ALTITUDE : altitude < DETAIL_ENTER_ALTITUDE;
+}
