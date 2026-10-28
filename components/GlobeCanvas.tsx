@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   AreaLayer,
   EngineUnsupportedError,
@@ -17,7 +17,7 @@ import {
 } from '@/engine';
 import type { BoundaryPath, QuakeFeature } from '@/lib/types';
 import { magColor, sourceLabel } from '@/lib/format';
-import { DETAIL_PRELOAD_ALTITUDE, pointScaleFor, wantsDetail } from '@/lib/globeView';
+import { DETAIL_PRELOAD_ALTITUDE, describeView, pointScaleFor, wantsDetail } from '@/lib/globeView';
 
 /**
  * The globe of the app, drawn by the project's own WebGL2 engine (see /engine): the planet, the
@@ -91,6 +91,8 @@ interface Props {
   detailedCountries?: any[] | null;
   /** The camera came close enough that the detailed borders will be wanted: start loading them. */
   onNeedDetail?: () => void;
+  /** The "home" key (0 / Home) was pressed on the globe: show the whole planet again. */
+  onHome?: () => void;
   boundaries: BoundaryPath[];
   quakes: QuakeFeature[];
   pulseQuakes: QuakeFeature[];
@@ -137,6 +139,7 @@ export default function GlobeCanvas({
   countries,
   detailedCountries = null,
   onNeedDetail,
+  onHome,
   boundaries,
   quakes,
   pulseQuakes,
@@ -164,6 +167,9 @@ export default function GlobeCanvas({
   const [fineReady, setFineReady] = useState(false);
   const wantFineRef = useRef(false);
   const detailAskedRef = useRef(false);
+  // What a screen reader says after the view was moved with the keyboard.
+  const [announcement, setAnnouncement] = useState('');
+  const helpId = useId();
 
   // Latest callbacks, reachable from the engine's long-lived handlers.
   const onReadyRef = useRef(onReady);
@@ -178,6 +184,8 @@ export default function GlobeCanvas({
   onCountryClickRef.current = onCountryClick;
   const onNeedDetailRef = useRef(onNeedDetail);
   onNeedDetailRef.current = onNeedDetail;
+  const onHomeRef = useRef(onHome);
+  onHomeRef.current = onHome;
 
   // ---- The engine, its layers, the label and the pointer handling ------------------------------
   useEffect(() => {
@@ -185,14 +193,24 @@ export default function GlobeCanvas({
     if (!host) return;
     let engine: GlobeEngine;
     try {
-      engine = new GlobeEngine(host, { textureUrls: EARTH_TEXTURES, atmosphereColor: '#4fd1c5', atmosphereAltitude: 0.15 });
+      engine = new GlobeEngine(host, {
+        textureUrls: EARTH_TEXTURES,
+        atmosphereColor: '#4fd1c5',
+        atmosphereAltitude: 0.15,
+        adaptiveResolution: true, // lowers the sharpness only while moving, on devices that cannot keep up
+      });
     } catch (err) {
       if (!(err instanceof EngineUnsupportedError)) console.error(err);
       setUnsupported(true);
       onReadyRef.current?.(); // the rest of the app does not need the globe
       return;
     }
-    engine.canvas.setAttribute('aria-label', 'Globo terráqueo interactivo con los sismos recientes');
+    // A focusable, keyboard-driven surface: an "application", not a picture.
+    engine.canvas.setAttribute('role', 'application');
+    engine.canvas.setAttribute('aria-roledescription', 'globo interactivo');
+    engine.canvas.setAttribute('aria-label', 'Globo terráqueo con los sismos recientes');
+    engine.canvas.setAttribute('aria-describedby', helpId);
+    engine.canvas.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown ArrowLeft ArrowRight + - 0 Home');
 
     const areas = new AreaLayer<AreaData>();
     const lines = new LineLayer<LineData>();
@@ -237,7 +255,23 @@ export default function GlobeCanvas({
       return hit ? vecToGeo(hit) : null;
     };
 
+    // After the view was moved with the keys, say where it is (once it has stopped for a moment).
+    let announceTimer: ReturnType<typeof setTimeout> | 0 = 0;
+    const announce = () => {
+      announceTimer = 0;
+      const pov = engine.camera.pov();
+      const area = areas.pick(pov.lat, pov.lng);
+      const p = area?.data?.feature?.properties ?? {};
+      const place = area?.data?.kind === 'plate' ? null : (p.name as string | undefined) ?? null;
+      setAnnouncement(describeView(place, pov.altitude, pov.lat, pov.lng));
+    };
+
     engine.setEvents({
+      navigated: () => {
+        if (announceTimer) clearTimeout(announceTimer);
+        announceTimer = setTimeout(announce, 700);
+      },
+      home: () => onHomeRef.current?.(),
       hover: (pos, ev) => {
         if (!pos) return hideTip();
         const quake = quakeLayer.pickQuake(engine.camera, pos.x, pos.y, slopFor(ev));
@@ -291,13 +325,14 @@ export default function GlobeCanvas({
     onReadyRef.current?.();
 
     return () => {
+      if (announceTimer) clearTimeout(announceTimer);
       if (window.__seismoGlobe === layers) delete window.__seismoGlobe;
       layersRef.current = null;
       setReady(false);
       tip.remove();
       engine.destroy();
     };
-  }, []);
+  }, [helpId]);
 
   // ---- Map: countries, a selected country's subdivisions, a selected plate -----------------------
   const countryFeatures = useMemo<any[]>(
@@ -475,13 +510,27 @@ export default function GlobeCanvas({
     if (flyTo && ready && L) {
       // The flight starts only now (the request may have waited for the engine or a busy
       // main thread), so the parent's "ignore camera events during a flight" window starts now too.
-      onFlightStartRef.current?.(FLIGHT_MS);
-      L.engine.flyTo({ lat: flyTo.lat, lng: flyTo.lng, altitude: flyTo.altitude }, FLIGHT_MS);
+      // People who asked for less motion get the new view at once instead of a flight.
+      const calm = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const duration = calm ? 0 : FLIGHT_MS;
+      onFlightStartRef.current?.(duration);
+      L.engine.flyTo({ lat: flyTo.lat, lng: flyTo.lng, altitude: flyTo.altitude }, duration);
     }
   }, [flyTo, ready]);
 
   return (
     <div ref={hostRef} className="globe-host">
+      <p id={helpId} className="sr-only">
+        Globo interactivo. Con el foco en el globo: las flechas lo giran (con Mayús, más rápido), más y menos acercan y
+        alejan, y el cero o Inicio vuelven a la vista completa. Los sismos y los países también están en la lista y en el
+        selector de país.
+      </p>
+      <div className="globe-keys" aria-hidden="true">
+        <kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> mover · <kbd>+</kbd><kbd>−</kbd> zoom · <kbd>0</kbd> vista completa
+      </div>
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </div>
       {unsupported && (
         <div className="globe-unsupported" role="alert">
           Tu navegador no admite WebGL 2, necesario para el globo 3D. La lista de sismos, las estadísticas y las alertas siguen funcionando.

@@ -23,3 +23,19 @@ export const DETAIL_LEAVE_ALTITUDE = 1.3; // go back to the light set above this
 export function wantsDetail(altitude: number, showingDetail: boolean): boolean {
   return showingDetail ? altitude < DETAIL_LEAVE_ALTITUDE : altitude < DETAIL_ENTER_ALTITUDE;
 }
+
+/** How close the camera is, in words (for people who cannot see the globe). */
+export function distanceWords(altitude: number): string {
+  if (altitude < 0.25) return 'muy cerca';
+  if (altitude < 0.8) return 'cerca';
+  if (altitude < 1.8) return 'a media distancia';
+  return 'vista completa';
+}
+
+/** What a screen reader says after the view was moved with the keyboard. */
+export function describeView(place: string | null, altitude: number, lat: number, lng: number): string {
+  const ns = lat >= 0 ? 'N' : 'S';
+  const ew = lng >= 0 ? 'E' : 'O';
+  const coords = `${Math.abs(lat).toFixed(1)}° ${ns}, ${Math.abs(lng).toFixed(1)}° ${ew}`;
+  return `Centro de la vista: ${place && place.trim() ? place.trim() : 'mar o zona sin país'} (${coords}), ${distanceWords(altitude)}.`;
+}

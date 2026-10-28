@@ -634,6 +634,51 @@ html, body {
   background: rgba(0, 0, 0, 0.6);
   pointer-events: none;
 }
+/* Text for screen readers only. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* Keyboard focus on the globe: a ring, and a reminder of the keys that drive it. */
+.globe-host canvas:focus { outline: none; }
+.globe-host canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.globe-keys {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 4;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(15, 23, 42, 0.82);
+  border: 1px solid var(--panel-border);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.globe-keys kbd {
+  display: inline-block;
+  min-width: 18px;
+  margin: 0 1px;
+  padding: 0 4px;
+  border-radius: 4px;
+  text-align: center;
+  font: inherit;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.08);
+}
+.globe-host:has(canvas:focus-visible) .globe-keys { opacity: 1; }
+@media (max-width: 640px) { .globe-keys { display: none; } }
 .globe-unsupported {
   position: absolute;
   left: 50%;

@@ -643,6 +643,12 @@ export default function GlobeExperience() {
     }
   }, []);
 
+  // The "0" / Home key on the globe: whole planet again, nothing in focus.
+  const handleHome = useCallback(() => {
+    clearPlate({ resetCamera: false });
+    clearSelection({ resetCamera: true });
+  }, [clearPlate, clearSelection]);
+
   const handlePlateSelectChange = useCallback(
     (code: string) => {
       if (!code) {
@@ -966,6 +972,7 @@ export default function GlobeExperience() {
           countries={countries}
           detailedCountries={detailFeatures}
           onNeedDetail={handleNeedDetail}
+          onHome={handleHome}
           boundaries={boundaries}
           quakes={displayedQuakes}
           pulseQuakes={pulseQuakes}

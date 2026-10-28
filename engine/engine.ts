@@ -1,3 +1,4 @@
+import { ResolutionGovernor } from './adaptive';
 import { GlobeCamera, type Pov } from './camera';
 import { GlobeControls, type ControlEvents } from './controls';
 import { loadImageFirst, makeBuffer, makeProgram, parseColor, type Program } from './glcore';
@@ -9,8 +10,10 @@ import { GLOBE_FRAG, GLOBE_VERT } from './shaders';
  * Fluidity rules it follows:
  *   - it draws only when something changed (camera moved, layer animating, data changed) — an idle
  *     globe costs nothing;
- *   - while only layers animate (pulsing rings) it caps itself at 30 frames per second;
- *   - the resolution follows the device pixel ratio, capped, and can be scaled down;
+ *   - while only layers animate (pulsing rings) it caps itself at 30 frames per second, and at 20
+ *     once nothing has been touched for a few seconds;
+ *   - the resolution follows the device pixel ratio, capped; with `adaptiveResolution` it is lowered
+ *     while the view moves on a device that cannot keep up, and always restored when the view rests;
  *   - if the browser takes the GPU away (context lost) it rebuilds everything when it comes back.
  */
 
@@ -66,6 +69,13 @@ export interface EngineOptions {
   /** Height of the atmosphere in globe radii. */
   atmosphereAltitude?: number;
   maxPixelRatio?: number;
+  /**
+   * Lower the resolution while the view moves if frames come slow (see adaptive.ts). The picture is
+   * always drawn at full resolution once the view rests.
+   */
+  adaptiveResolution?: boolean;
+  /** Floor of the adaptive scale (default 0.5). */
+  minRenderScale?: number;
   /** Wrap the draw calls so the engine can count them (for measuring). */
   countDrawCalls?: boolean;
   onPov?: (pov: Pov) => void;
@@ -81,9 +91,15 @@ export interface EngineStats {
   /** Frames per second over the last second of continuous drawing. */
   fps: number;
   contextLosses: number;
+  /** Drawing-buffer pixels per CSS pixel the last frame used (device ratio, capped, times the render scale). */
+  pixelRatio: number;
 }
 
 const LAYER_ONLY_INTERVAL_MS = 33;
+const LAYER_IDLE_INTERVAL_MS = 50; // animating layers once nothing has been touched for IDLE_AFTER_MS
+const IDLE_AFTER_MS = 5000;
+const INPUT_RECENT_MS = 250; // input this recent means the view is being moved by hand
+const SETTLE_MS = 220; // the view counts as at rest this long after the last moving frame
 const PLACEHOLDER_RGB: [number, number, number] = [10, 18, 34];
 
 export class GlobeEngine {
@@ -92,7 +108,7 @@ export class GlobeEngine {
   readonly overlay: HTMLElement;
   readonly camera = new GlobeCamera();
   readonly controls: GlobeControls;
-  readonly stats: EngineStats = { frames: 0, drawCalls: 0, cpuMs: 0, fps: 0, contextLosses: 0 };
+  readonly stats: EngineStats = { frames: 0, drawCalls: 0, cpuMs: 0, fps: 0, contextLosses: 0, pixelRatio: 1 };
 
   onPov?: (pov: Pov) => void;
 
@@ -118,7 +134,14 @@ export class GlobeEngine {
   private cssHeight = 1;
   private pixelRatio = 1;
   private readonly maxPixelRatio: number;
-  private renderScale = 1;
+  private renderScale = 1; // set by the caller (setRenderScale)
+  private readonly governor: ResolutionGovernor | null;
+  private moving = false; // frames of camera motion are being drawn (the governor's scale applies)
+  private lastMotionFrame = 0;
+  private settleTimer: ReturnType<typeof setTimeout> | 0 = 0;
+  private lastActivity = 0;
+  private frameGap = 16; // smoothed time between drawn frames, ms
+  private inputAt = Number.NEGATIVE_INFINITY; // last pointer / wheel / key input that moves the view
   private resizeObserver: ResizeObserver | null = null;
   private hoverCursor: string | null = null;
   private dragging = false;
@@ -131,6 +154,7 @@ export class GlobeEngine {
     this.options = options;
     this.onPov = options.onPov;
     this.maxPixelRatio = options.maxPixelRatio ?? 2;
+    this.governor = options.adaptiveResolution ? new ResolutionGovernor({ min: options.minRenderScale ?? 0.5 }) : null;
     const c = parseColor(options.atmosphereColor ?? '#4fd1c5');
     this.atmColor = [c[0], c[1], c[2]];
     this.atmHeight = options.atmosphereAltitude ?? 0.15;
@@ -162,7 +186,10 @@ export class GlobeEngine {
     canvas.addEventListener('webglcontextlost', this.onContextLost);
     canvas.addEventListener('webglcontextrestored', this.onContextRestored);
 
-    this.controls = new GlobeControls(canvas, this.camera, () => this.requestRender(), {
+    this.controls = new GlobeControls(canvas, this.camera, () => {
+      this.inputAt = performance.now();
+      this.requestRender();
+    }, {
       dragging: (active) => {
         this.dragging = active;
         this.updateCursor();
@@ -213,6 +240,7 @@ export class GlobeEngine {
   }
 
   flyTo(pov: Pov, durationMs: number): void {
+    this.controls.stopKeys(); // a glide left by a key just released must not fight the flight
     this.camera.flyTo(pov, durationMs, performance.now());
     this.requestRender();
   }
@@ -222,7 +250,7 @@ export class GlobeEngine {
     this.updateCursor();
   }
 
-  /** Scales the drawing-buffer resolution relative to the device (1 = native, capped by maxPixelRatio). */
+  /** Scales the drawing-buffer resolution relative to the device (1 = native, capped by maxPixelRatio). A fixed choice: the adaptive scale applies on top of it while moving. */
   setRenderScale(scale: number): void {
     const s = Math.min(1, Math.max(0.4, scale));
     if (s === this.renderScale) return;
@@ -276,6 +304,8 @@ export class GlobeEngine {
     this.destroyed = true;
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
+    if (this.settleTimer) clearTimeout(this.settleTimer);
+    this.settleTimer = 0;
     this.resizeObserver?.disconnect();
     this.controls.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
@@ -408,11 +438,16 @@ export class GlobeEngine {
 
   // ------------------------------------------------------------------ size
 
+  /** The caller's scale, times the governor's while the view moves. */
+  private effectiveScale(): number {
+    return this.renderScale * (this.moving && this.governor ? this.governor.scale : 1);
+  }
+
   private measure(): void {
     const rect = this.container.getBoundingClientRect();
     const w = Math.max(1, Math.round(rect.width));
     const h = Math.max(1, Math.round(rect.height));
-    const dpr = Math.min(this.maxPixelRatio, window.devicePixelRatio || 1) * this.renderScale;
+    const dpr = Math.min(this.maxPixelRatio, window.devicePixelRatio || 1) * this.effectiveScale();
     this.cssWidth = w;
     this.cssHeight = h;
     this.pixelRatio = dpr;
@@ -421,6 +456,7 @@ export class GlobeEngine {
     if (this.canvas.width !== bw || this.canvas.height !== bh) {
       this.canvas.width = bw;
       this.canvas.height = bh;
+      this.dirty = true; // resizing clears the buffer
     }
     this.camera.setViewport(w, h);
   }
@@ -440,12 +476,17 @@ export class GlobeEngine {
     this.raf = 0;
     if (this.destroyed || this.lost) return;
     const now = performance.now();
-    const moved = this.camera.update(now);
+    const keyMoved = this.controls.update(now);
+    const moved = this.camera.update(now) || keyMoved;
     const layerAnim = this.layersAnimating();
-    const cameraAnim = this.camera.animating;
+    const cameraAnim = this.camera.animating || this.controls.keysActive;
+    // A drag changes the view in the pointer handlers, not in camera.update(): input counts as motion too.
+    if (this.governor) this.adapt(now, moved || cameraAnim || now - this.inputAt < INPUT_RECENT_MS); // may resize the buffer, which asks for a redraw
     const mustDraw = this.dirty || moved;
+    if (mustDraw || cameraAnim) this.lastActivity = now;
 
-    if (mustDraw || (layerAnim && now - this.lastRender >= LAYER_ONLY_INTERVAL_MS)) {
+    const layerInterval = now - this.lastActivity > IDLE_AFTER_MS ? LAYER_IDLE_INTERVAL_MS : LAYER_ONLY_INTERVAL_MS;
+    if (mustDraw || (layerAnim && now - this.lastRender >= layerInterval)) {
       this.dirty = false;
       this.render(now);
     }
@@ -455,6 +496,34 @@ export class GlobeEngine {
     if (cameraAnim || layerAnim || this.dirty) {
       this.raf = requestAnimationFrame(this.frame);
     }
+  };
+
+  /** Feeds the governor the gap between motion frames; draws at full resolution once motion stops. */
+  private adapt(now: number, active: boolean): void {
+    const governor = this.governor;
+    if (!governor || !active) return;
+    if (!this.moving) {
+      this.moving = true;
+      this.lastMotionFrame = 0;
+      governor.rest();
+      this.measure(); // the scale learned so far applies from the first moving frame
+    } else if (this.lastMotionFrame > 0) {
+      if (governor.frame(now - this.lastMotionFrame, now) !== null) this.measure();
+    }
+    // A slow device has long gaps between frames: the view only counts as resting after clearly more than a gap.
+    this.lastMotionFrame = now;
+    if (this.settleTimer) clearTimeout(this.settleTimer);
+    this.settleTimer = setTimeout(this.settle, Math.max(SETTLE_MS, Math.min(2000, this.frameGap * 2.5)));
+  }
+
+  private settle = (): void => {
+    this.settleTimer = 0;
+    if (!this.moving || this.destroyed) return;
+    this.moving = false;
+    this.lastMotionFrame = 0;
+    this.governor?.rest();
+    this.measure();
+    this.requestRender(); // the sharp picture
   };
 
   private trackFps(now: number, active: boolean): void {
@@ -492,6 +561,8 @@ export class GlobeEngine {
     const gl = this.gl;
     const cam = this.camera;
     this.drawCalls = 0;
+    const sinceLast = now - this.lastRender;
+    if (sinceLast > 0 && sinceLast < 2000) this.frameGap = this.frameGap * 0.7 + sinceLast * 0.3;
     this.lastRender = now;
 
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -507,6 +578,7 @@ export class GlobeEngine {
 
     this.stats.frames++;
     this.stats.drawCalls = this.drawCalls;
+    this.stats.pixelRatio = this.pixelRatio;
     const cost = performance.now() - t0;
     this.stats.cpuMs = this.stats.frames === 1 ? cost : this.stats.cpuMs * 0.9 + cost * 0.1;
     this.emitPov();

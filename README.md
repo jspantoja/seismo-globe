@@ -63,14 +63,26 @@ código del proyecto, con pruebas propias (`npm test`) y un banco de pruebas en 
   (una llamada por capa) y todos los sismos son una sola malla instanciada. Con un mes de datos
   (~10 000 sismos) son ~6 llamadas por fotograma; la versión con three.js hacía ~1 700.
 - **Dibuja solo cuando hace falta.** Sin movimiento ni animaciones el motor no dibuja nada; con
-  solo anillos activos se limita a 30 fps, y la resolución se limita a 2× de densidad de píxeles.
+  solo anillos activos se limita a 30 fps (20 fps tras 5 s sin tocar nada), y la resolución se
+  limita a 2× de densidad de píxeles.
+- **Resolución adaptable.** Si los fotogramas en movimiento tardan más de ~27 ms (mediana de 12), el
+  motor baja la resolución hasta un mínimo de 0,5× y vuelve a subirla con paciencia creciente si el
+  equipo no aguanta. En reposo siempre dibuja a resolución completa (`engine/adaptive.ts`).
+- **Dos niveles de detalle en los países.** Arranca con Natural Earth 1:110m; al acercarse por debajo
+  de ~1,0 de altitud usa 1:50m (se precarga desde 1,8 y vuelve a 110m por encima de 1,3, con
+  histéresis para que no parpadee). El ensamblado del mapa guarda en caché los contornos y trocea
+  la preparación en tramos de ~6 ms para no bloquear el hilo principal.
+- **Teclado y accesibilidad.** El globo es una región enfocable (`role="application"`): las flechas
+  lo giran con velocidad mientras se mantienen, `+`/`-` acercan y alejan, `0` o `Inicio` vuelven a
+  la vista del planeta entero. La vista se anuncia por `aria-live` (país bajo el centro y altura),
+  hay anillo de foco visible y con `prefers-reduced-motion` los vuelos son saltos instantáneos.
 - **Precisión al hacer zoom.** Las posiciones se envían como pares (alto, bajo) en coma flotante
   relativos al ojo, para que los límites no tiemblen a pocos kilómetros de altura.
 - **Hover y clic sin trazado de rayos.** Se proyecta cada sismo a pantalla y gana el más cercano
   al puntero entre los que miran a la cámara (~0,5 ms para 20 000 sismos).
 - **Pérdida de contexto.** Si el navegador descarta el contexto WebGL, las capas se reconstruyen solas.
 
-Peso del JavaScript de la aplicación (producción, gzip): ~226 KB frente a ~779 KB con three.js.
+Peso del JavaScript de la aplicación (producción, gzip): ~225 KB frente a ~779 KB con three.js.
 
 ## Enlaces compartibles
 
@@ -93,5 +105,5 @@ corre tipos, pruebas y compilación en cada push y pull request.
 - El USGS es completo desde M4.5 fuera de EE. UU.
 - La copia del servidor vive en memoria de cada instancia; se pierde al reiniciarse.
 - El globo necesita WebGL2 (todos los navegadores actuales); sin él se muestra un aviso en lugar del globo.
-- Al elegir un país, triangular su frontera detallada (1:50m) ocupa unos 200 ms del hilo principal.
+- La primera preparación de los países a 1:50m cuesta ~300–470 ms de CPU; se trocea en tramos de ~6 ms (el polígono más grande se triangula de una vez, ~25 ms) y después reensamblar tras cambiar la selección baja a ~12–20 ms.
 - Medidas de rendimiento hechas con GL por software (sin GPU): sirven para llamadas de dibujo y coste de JavaScript, no para fotogramas por segundo.

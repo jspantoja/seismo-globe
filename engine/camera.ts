@@ -406,6 +406,15 @@ export class GlobeCamera {
     this.zoomTarget = { altitude: target, pinX: x, pinY: y };
   }
 
+  /** Zooms by `factor` right now (< 1 comes closer), about the centre: for keys held down, frame by frame. */
+  zoomNow(factor: number): void {
+    this.flight = null;
+    this.zoomTarget = null;
+    this.spin = null;
+    this.altitude = clamp(this.altitude * factor, this.minAltitude, this.maxAltitude);
+    this.version++;
+  }
+
   /**
    * A two-finger gesture: zooms by `factor` and moves, so the globe point that was under the
    * previous centre of the fingers ends up under the new one.
