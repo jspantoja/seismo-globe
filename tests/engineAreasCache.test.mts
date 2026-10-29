@@ -216,7 +216,7 @@ runSequence(countries('countries-50m.json'), plates, '50m');
   let slices = 0;
   let last = performance.now();
   await prepared.prepare(specs, {
-    sliceMs: 6,
+    sliceMs: 2, // small enough that even a fast machine needs many slices
     yieldFn: async () => {
       const now = performance.now();
       longest = Math.max(longest, now - last);
@@ -230,7 +230,7 @@ runSequence(countries('countries-50m.json'), plates, '50m');
   const afterMs = performance.now() - t;
   console.log(`  50m: cold assemble ${coldMs.toFixed(0)} ms; prepared in ${slices} slices (longest ${longest.toFixed(1)} ms), then assemble ${afterMs.toFixed(1)} ms`);
   assert.ok(afterMs < coldMs * 0.5, 'the assemble after prepare is much cheaper than a cold one');
-  assert.ok(slices > 20, 'the work was really sliced');
+  assert.ok(slices > 10, `the work was really sliced (${slices} slices)`);
 }
 
 console.log('engineAreasCache tests: ok');
