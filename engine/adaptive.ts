@@ -37,6 +37,8 @@ const PROBE_GRACE_MS = 3000;
 export class ResolutionGovernor {
   /** The scale to draw moving frames at (1 = the device's resolution, capped by the engine). */
   scale = 1;
+  /** The median frame gap of the latest full assessment, in ms (null before the first one): for diagnostics. */
+  lastMedianMs: number | null = null;
 
   private readonly min: number;
   private readonly slowMs: number;
@@ -73,6 +75,7 @@ export class ResolutionGovernor {
     // The median: one long frame (a garbage collection, a hitch) must not look like a slow device.
     const sorted = [...this.gaps].sort((a, b) => a - b);
     const avg = sorted[sorted.length >> 1];
+    this.lastMedianMs = avg;
 
     if (avg > this.slowMs && this.scale > this.min) {
       if (this.probing && now - this.lastProbe < PROBE_GRACE_MS) {

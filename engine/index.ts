@@ -1,5 +1,5 @@
 export { GlobeEngine, EngineUnsupportedError } from './engine';
-export type { EngineLayer, EngineOptions, EngineStats, FrameContext, LayerHost } from './engine';
+export type { EngineDiagnostics, EngineLayer, EngineOptions, EngineStats, FrameContext, LayerHost } from './engine';
 export { AreaLayer, LineLayer, distanceToArc } from './surface';
 export type { LineSpec } from './surface';
 export type { AreaSpec, PrepareOptions } from './areas';

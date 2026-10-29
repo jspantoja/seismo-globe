@@ -18,6 +18,7 @@ import {
 import type { BoundaryPath, QuakeFeature } from '@/lib/types';
 import { magColor, sourceLabel } from '@/lib/format';
 import { DETAIL_PRELOAD_ALTITUDE, describeView, pointScaleFor, wantsDetail } from '@/lib/globeView';
+import { diagnosticsRequested, formatDiagnostics, type DiagExtras } from '@/lib/diagnostics';
 
 /**
  * The globe of the app, drawn by the project's own WebGL2 engine (see /engine): the planet, the
@@ -162,6 +163,10 @@ export default function GlobeCanvas({
   // requested before it exists (e.g. a country taken from a shared link) is applied as soon as it does.
   const [ready, setReady] = useState(false);
   const [unsupported, setUnsupported] = useState(false);
+  // `?diag=1`: a small panel with what the engine measures (see lib/diagnostics.ts). Off for everyone else.
+  const [diag, setDiag] = useState(false);
+  const diagRef = useRef<HTMLButtonElement>(null);
+  const diagExtraRef = useRef<DiagExtras>({ detail: '110m', quakes: 0 });
   // Level of detail: the camera asks for the fine borders (wantFine) and they are used once prepared (fineReady).
   const [wantFine, setWantFine] = useState(false);
   const [fineReady, setFineReady] = useState(false);
@@ -191,9 +196,17 @@ export default function GlobeCanvas({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    let diagOn = false;
+    try {
+      diagOn = diagnosticsRequested(window.location.search, window.sessionStorage);
+    } catch {
+      diagOn = diagnosticsRequested(window.location.search, null); // storage blocked in this browser
+    }
+    setDiag(diagOn);
     let engine: GlobeEngine;
     try {
       engine = new GlobeEngine(host, {
+        countDrawCalls: diagOn,
         textureUrls: EARTH_TEXTURES,
         atmosphereColor: '#4fd1c5',
         atmosphereAltitude: 0.15,
@@ -347,6 +360,7 @@ export default function GlobeCanvas({
     return countryFeatures.map((f) => fineById.get(String(f.id)) ?? f);
   }, [countryFeatures, detailedCountries]);
   const detailActive = wantFine && fineReady && fineCountryFeatures !== null;
+  diagExtraRef.current = { detail: detailActive ? '50m' : '110m', quakes: quakes.length };
   const shownCountries = detailActive ? fineCountryFeatures : countryFeatures;
   // A selected country's own administrative divisions replace that country's outline, while its
   // neighbours stay visible (and clickable) around it.
@@ -518,6 +532,35 @@ export default function GlobeCanvas({
     }
   }, [flyTo, ready]);
 
+  // The diagnostics panel refreshes twice a second, only while it is shown.
+  useEffect(() => {
+    if (!diag || !ready) return;
+    const update = () => {
+      const el = diagRef.current;
+      const L = layersRef.current;
+      if (!el || !L) return;
+      el.textContent = formatDiagnostics(L.engine.diagnostics(), diagExtraRef.current);
+    };
+    update();
+    const id = window.setInterval(update, 500);
+    return () => window.clearInterval(id);
+  }, [diag, ready]);
+
+  const copyDiagnostics = useCallback(async () => {
+    const el = diagRef.current;
+    if (!el) return;
+    const text = el.textContent ?? '';
+    try {
+      await navigator.clipboard.writeText(`SeismoGlobe diag\n${text}\n${navigator.userAgent}`);
+      el.dataset.copied = '1';
+      window.setTimeout(() => {
+        if (el.isConnected) delete el.dataset.copied;
+      }, 1500);
+    } catch {
+      /* clipboard blocked: the text is on screen to read out */
+    }
+  }, []);
+
   return (
     <div ref={hostRef} className="globe-host">
       <p id={helpId} className="sr-only">
@@ -531,6 +574,9 @@ export default function GlobeCanvas({
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {announcement}
       </div>
+      {diag && !unsupported && (
+        <button type="button" ref={diagRef} className="globe-diag" onClick={copyDiagnostics} aria-label="Diagnóstico del globo: tocar para copiar" />
+      )}
       {unsupported && (
         <div className="globe-unsupported" role="alert">
           Tu navegador no admite WebGL 2, necesario para el globo 3D. La lista de sismos, las estadísticas y las alertas siguen funcionando.

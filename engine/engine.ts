@@ -99,8 +99,41 @@ const LAYER_ONLY_INTERVAL_MS = 33;
 const LAYER_IDLE_INTERVAL_MS = 50; // animating layers once nothing has been touched for IDLE_AFTER_MS
 const IDLE_AFTER_MS = 5000;
 const INPUT_RECENT_MS = 250; // input this recent means the view is being moved by hand
+/** What a diagnostics panel shows: how much the last frames cost and how the picture is being drawn. */
+export interface EngineDiagnostics {
+  fps: number;
+  frames: number;
+  /** Smoothed JS time spent in render(), in milliseconds. */
+  cpuMs: number;
+  drawCalls: number;
+  contextLosses: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  devicePixelRatio: number;
+  /** Drawing-buffer pixels per CSS pixel right now (device ratio, capped, times render and adaptive scales). */
+  pixelRatio: number;
+  /** The adaptive resolution governor's current scale, null when it is off. */
+  adaptiveScale: number | null;
+  /** Median gap between recent frames of motion, in ms, once measured. */
+  frameMs: number | null;
+  moving: boolean;
+  /** The graphics driver the browser reports ("" when it hides it). */
+  renderer: string;
+}
+
 const SETTLE_MS = 220; // the view counts as at rest this long after the last moving frame
 const PLACEHOLDER_RGB: [number, number, number] = [10, 18, 34];
+
+/** The driver name WebGL reports; browsers that hide it (or old ones) give "". */
+function readRendererName(gl: WebGL2RenderingContext): string {
+  try {
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    return typeof name === 'string' ? name : '';
+  } catch {
+    return '';
+  }
+}
 
 export class GlobeEngine {
   readonly canvas: HTMLCanvasElement;
@@ -136,6 +169,7 @@ export class GlobeEngine {
   private readonly maxPixelRatio: number;
   private renderScale = 1; // set by the caller (setRenderScale)
   private readonly governor: ResolutionGovernor | null;
+  private rendererName: string | null = null;
   private moving = false; // frames of camera motion are being drawn (the governor's scale applies)
   private lastMotionFrame = 0;
   private settleTimer: ReturnType<typeof setTimeout> | 0 = 0;
@@ -265,6 +299,25 @@ export class GlobeEngine {
 
   get glContext(): WebGL2RenderingContext {
     return this.gl;
+  }
+
+  /** A snapshot for a diagnostics panel. Cheap enough to read a couple of times per second. */
+  diagnostics(): EngineDiagnostics {
+    return {
+      fps: this.stats.fps,
+      frames: this.stats.frames,
+      cpuMs: this.stats.cpuMs,
+      drawCalls: this.stats.drawCalls,
+      contextLosses: this.stats.contextLosses,
+      canvasWidth: this.canvas.width,
+      canvasHeight: this.canvas.height,
+      devicePixelRatio: typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1,
+      pixelRatio: this.pixelRatio,
+      adaptiveScale: this.governor ? this.governor.scale : null,
+      frameMs: this.governor ? this.governor.lastMedianMs : null,
+      moving: this.moving,
+      renderer: (this.rendererName ??= readRendererName(this.gl)),
+    };
   }
 
   get isLost(): boolean {

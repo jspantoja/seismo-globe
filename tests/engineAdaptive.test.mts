@@ -117,6 +117,15 @@ function feed(g: ResolutionGovernor, clock: { t: number }, gap: number, count: n
   assert.deepEqual(feed(g, clock, 80, 8), [], 'the frames before the rest do not count');
 }
 
+// --- the last assessed median is kept for the diagnostics panel
+{
+  const g = new ResolutionGovernor({ window: 12 });
+  assert.equal(g.lastMedianMs, null, 'nothing measured yet');
+  const clock = { t: 0 };
+  feed(g, clock, 40, 12);
+  assert.equal(g.lastMedianMs, 40, 'the median of the first full window');
+}
+
 // --- scale values are tidy numbers
 {
   const g = new ResolutionGovernor();
