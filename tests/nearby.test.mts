@@ -65,10 +65,11 @@ for (const [text, kind, expected] of [
 assert.equal(pointScaleFor(2.2), 1);
 assert.equal(pointScaleFor(5), 1, 'never bigger than the whole-planet size');
 assert.equal(pointScaleFor(0.15), 0.3);
-assert.equal(pointScaleFor(0), 0.3, 'never below the smallest step');
+assert.ok(Math.abs(pointScaleFor(0.15 - 1e-9) - pointScaleFor(0.15)) < 0.001, 'no jump when crossing the closest flight');
+assert.equal(pointScaleFor(0), 0.03, 'by hand the camera can go lower: dots keep their on-screen size, never below a tenth');
 assert.ok(pointScaleFor(0.25) < pointScaleFor(1) && pointScaleFor(1) < pointScaleFor(2));
 const steps = new Set<number>();
-for (let a = 0.1; a <= 3; a += 0.01) steps.add(pointScaleFor(a));
+for (let a = 0.15; a <= 3; a += 0.01) steps.add(pointScaleFor(a)); // the range the app itself flies in
 assert.ok(steps.size <= 9, `few distinct steps keep re-renders rare (${steps.size})`);
 
 console.log('nearby tests: ok');

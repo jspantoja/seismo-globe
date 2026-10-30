@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+
 const SCALE: [string, string][] = [
   ['#4fd1c5', '< 2'],
   ['#ecc94b', '2–3.9'],
@@ -22,9 +24,19 @@ export default function Legend({
   emscEnabled: boolean;
   onOpenSources: () => void;
 }) {
+  // On a phone the legend would cover a third of the globe: the scale and the "not official" notice stay,
+  // the rest folds away behind a button (CSS shows everything on wider screens). The notices about the
+  // optional sources stay visible while those sources are on.
+  const [open, setOpen] = useState(false);
+  const notices = sgcEnabled || emscEnabled;
   return (
-    <div className="panel legend">
-      <div style={{ fontWeight: 700, fontSize: 12.5, color: 'var(--text)' }}>Magnitud (Richter/Mw)</div>
+    <div className={`panel legend ${open || notices ? 'legend--open' : ''}`}>
+      <div className="legend__head">
+        <span style={{ fontWeight: 700, fontSize: 12.5, color: 'var(--text)' }}>Magnitud (Richter/Mw)</span>
+        <button type="button" className="legend__toggle" aria-expanded={open || notices} onClick={() => setOpen((v) => !v)} disabled={notices}>
+          {open || notices ? 'Menos ▴' : 'Más ▾'}
+        </button>
+      </div>
       <div className="legend__scale">
         {SCALE.map(([color, label]) => (
           <span key={label} className="legend__chip">
@@ -33,7 +45,7 @@ export default function Legend({
           </span>
         ))}
       </div>
-      <div className="legend__scale">
+      <div className="legend__scale legend__extra">
         <span className="legend__chip">
           <span style={{ width: 14, height: 2, background: '#ff8a3d', display: 'inline-block' }} />
           Límite de subducción
@@ -43,7 +55,7 @@ export default function Legend({
           Otro límite de placa
         </span>
       </div>
-      <div className="legend__sources">
+      <div className="legend__sources legend__extra">
         Mostrando {quakeCount} sismos{sourceFetchedAt ? ` · actualizado ${new Date(sourceFetchedAt).toLocaleTimeString('es')}` : ''}
         <br />
         Sismos:{' '}

@@ -1054,41 +1054,45 @@ export default function GlobeExperience() {
           </select>
         </div>
 
-        <div className="panel controls">
-          {(Object.keys(PERIOD_LABEL) as Period[]).map((p) => (
-            <button key={p} className={`btn ${period === p ? 'active' : ''}`} onClick={() => setPeriod(p)}>
-              {PERIOD_LABEL[p]}
-            </button>
-          ))}
-        </div>
+        {/* Period, magnitude and sources: one swipeable strip on phones (display: contents on wide screens, where the panels wrap as before). */}
+        <div className="topbar__strip">
+          <div className="panel controls">
+            {(Object.keys(PERIOD_LABEL) as Period[]).map((p) => (
+              <button key={p} className={`btn ${period === p ? 'active' : ''}`} onClick={() => setPeriod(p)}>
+                {PERIOD_LABEL[p]}
+              </button>
+            ))}
+          </div>
 
-        <div className="panel controls">
-          {[
-            { label: 'Todos', v: 0 },
-            { label: 'M2.5+', v: 2.5 },
-            { label: 'M4.5+', v: 4.5 },
-          ].map((o) => (
-            <button key={o.v} className={`btn ${minMag === o.v ? 'active' : ''}`} onClick={() => setMinMag(o.v)}>
-              {o.label}
-            </button>
-          ))}
-        </div>
+          <div className="panel controls">
+            {[
+              { label: 'Todos', v: 0 },
+              { label: 'M2.5+', v: 2.5 },
+              { label: 'M4.5+', v: 4.5 },
+            ].map((o) => (
+              <button key={o.v} className={`btn ${minMag === o.v ? 'active' : ''}`} onClick={() => setMinMag(o.v)}>
+                {o.label}
+              </button>
+            ))}
+          </div>
 
-        <div className="panel controls">
-          <button
-            className={`btn ${sgcEnabled ? 'active' : ''}`}
-            onClick={() => setSgcEnabled((v) => !v)}
-            title="Fuente comunitaria no oficial — autorización de republicación del SGC pendiente"
-          >
-            🇨🇴 SGC Colombia (no oficial){sgcEnabled && sgc.data ? ` · ${sgc.data.count}` : ''}
-          </button>
-          <button
-            className={`btn ${emscEnabled ? 'active' : ''}`}
-            onClick={() => setEmscEnabled((v) => !v)}
-            title="Testimonios «¿lo sentiste?» del EMSC (CC BY 4.0). Preliminares; el número de reportes no mide daños."
-          >
-            👥 Reportes ciudadanos (EMSC){emscEnabled && emsc.data ? ` · ${emsc.data.count}` : ''}
-          </button>
+          <div className="panel controls">
+            <button
+              className={`btn ${sgcEnabled ? 'active' : ''}`}
+              onClick={() => setSgcEnabled((v) => !v)}
+              title="Fuente comunitaria no oficial — autorización de republicación del SGC pendiente"
+            >
+              🇨🇴 SGC Colombia (no oficial){sgcEnabled && sgc.data ? ` · ${sgc.data.count}` : ''}
+            </button>
+            <button
+              className={`btn ${emscEnabled ? 'active' : ''}`}
+              onClick={() => setEmscEnabled((v) => !v)}
+              title="Testimonios «¿lo sentiste?» del EMSC (CC BY 4.0). Preliminares; el número de reportes no mide daños."
+            >
+              👥 Reportes ciudadanos (EMSC){emscEnabled && emsc.data ? ` · ${emsc.data.count}` : ''}
+            </button>
+          </div>
+
         </div>
 
         <div className="panel controls">

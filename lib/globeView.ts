@@ -8,7 +8,19 @@ export const ALTITUDE_NEAR = 0.15; // closest the app flies: a quarter of the si
 
 export function pointScaleFor(altitude: number): number {
   const t = Math.min(1, Math.max(0, (altitude - ALTITUDE_NEAR) / (ALTITUDE_FAR - ALTITUDE_NEAR)));
-  return Math.round((0.25 + 0.75 * t) * 10) / 10;
+  const base = 0.25 + 0.75 * t;
+  if (altitude >= ALTITUDE_NEAR) return Math.round(base * 10) / 10;
+  // Closer than the app itself ever flies (pinching in by hand): a dot sized in degrees would swell to
+  // cover the screen, so the scale follows the altitude down and a dot keeps about the size it had at
+  // the closest flight (never below a tenth of it, so it never vanishes).
+  // (0.3 is what the steps above give at the closest flight, so there is no jump when crossing it.)
+  return Math.round(0.3 * Math.max(0.1, altitude / ALTITUDE_NEAR) * 1000) / 1000;
+}
+
+/** The factor for the prisms' height: the same easing as the dot scale below the closest flight, otherwise 1. */
+export function heightScaleFor(altitude: number): number {
+  if (altitude >= ALTITUDE_NEAR) return 1;
+  return Math.round(Math.max(0.1, altitude / ALTITUDE_NEAR) * 1000) / 1000;
 }
 
 /**

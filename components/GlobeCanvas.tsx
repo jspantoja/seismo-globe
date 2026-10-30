@@ -17,7 +17,7 @@ import {
 } from '@/engine';
 import type { BoundaryPath, QuakeFeature } from '@/lib/types';
 import { magColor, sourceLabel } from '@/lib/format';
-import { DETAIL_PRELOAD_ALTITUDE, describeView, pointScaleFor, wantsDetail } from '@/lib/globeView';
+import { DETAIL_PRELOAD_ALTITUDE, describeView, heightScaleFor, pointScaleFor, wantsDetail } from '@/lib/globeView';
 import { diagnosticsRequested, formatDiagnostics, type DiagExtras } from '@/lib/diagnostics';
 
 /**
@@ -318,6 +318,7 @@ export default function GlobeCanvas({
     engine.onPov = (pov) => {
       hideTip(); // the globe moved under a resting pointer: the label is stale
       quakeLayer.setScale(pointScaleFor(pov.altitude)); // a uniform: free
+      quakeLayer.setHeightScale(heightScaleFor(pov.altitude));
       const fine = wantsDetail(pov.altitude, wantFineRef.current);
       if (fine !== wantFineRef.current) {
         wantFineRef.current = fine;
@@ -330,6 +331,7 @@ export default function GlobeCanvas({
       onZoomChangeRef.current(pov);
     };
     quakeLayer.setScale(pointScaleFor(engine.camera.altitude));
+    quakeLayer.setHeightScale(heightScaleFor(engine.camera.altitude));
 
     const layers: Layers = { engine, areas, lines, rings, quakes: quakeLayer, markers };
     layersRef.current = layers;

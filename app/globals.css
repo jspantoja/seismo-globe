@@ -73,6 +73,7 @@ html, body {
 }
 
 .topbar > * { pointer-events: auto; }
+.topbar__strip { display: contents; }
 
 .panel {
   background: var(--panel);
@@ -136,6 +137,8 @@ html, body {
 .legend__chip { display: flex; align-items: center; gap: 4px; }
 .legend__dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .legend__sources { margin-top: 8px; line-height: 1.5; }
+.legend__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.legend__toggle { display: none; }
 .legend__sources a { color: var(--accent); text-decoration: none; }
 .legend__sources a:hover { text-decoration: underline; }
 
@@ -685,7 +688,8 @@ html, body {
   bottom: 8px;
   transform: translateX(-50%);
   z-index: 40;
-  max-width: calc(100% - 16px);
+  width: max-content;
+  max-width: min(560px, calc(100% - 16px));
   padding: 6px 9px;
   border-radius: 8px;
   font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -711,6 +715,38 @@ html, body {
   color: var(--text);
   background: rgba(15, 23, 42, 0.85);
   border: 1px solid var(--panel-border);
+}
+
+/* ---- Teléfonos (y pantallas muy bajas, como un móvil horizontal): la cabecera y la leyenda no deben tapar el globo ni salirse de la pantalla ---- */
+@media (max-width: 720px), (max-height: 520px) {
+  .topbar { top: 8px; left: 8px; right: 8px; gap: 6px; }
+  .topbar .panel { max-width: 100%; }
+  /* Period, magnitude, sources and actions: one row that swipes sideways instead of four rows over the globe. */
+  .topbar__strip { display: flex; flex: 1 1 100%; min-width: 0; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; padding-bottom: 2px; }
+  .topbar__strip::-webkit-scrollbar { display: none; }
+  .topbar__strip > .panel { flex: 0 0 auto; max-width: none; overflow: visible; }
+  .brand { padding: 6px 12px; }
+  .brand__subtitle { display: none; }
+  .controls { padding: 4px; gap: 4px; max-width: 100%; }
+  .controls .btn { padding: 8px 8px; min-height: 34px; font-size: 12px; flex: 0 0 auto; }
+  .controls .country-select { flex: 1 1 0; min-width: 0; }
+
+  /* Country / plate card: a card above the legend, not a column over the filters. */
+  .country-panel { top: auto; left: 8px; right: 8px; bottom: 118px; width: auto; max-height: 34dvh; padding: 10px 12px; }
+  .country-panel__section { margin-bottom: 8px; }
+
+  .globe-diag { left: 8px; right: 8px; bottom: 118px; width: auto; max-width: none; transform: none; font-size: 10px; }
+  .legend { left: 8px; right: 8px; bottom: 8px; max-width: none; padding: 8px 10px; font-size: 11px; }
+  .legend__scale { margin: 4px 0; gap: 4px 8px; }
+  .legend__toggle { display: inline-block; border: 1px solid var(--panel-border); background: transparent; color: var(--accent); font-size: 11px; padding: 3px 8px; border-radius: 6px; cursor: pointer; }
+  .legend__toggle:disabled { display: none; }
+  .legend:not(.legend--open) .legend__extra { display: none; }
+}
+
+/* Móvil horizontal: la leyenda y la ficha del país ocupan una esquina cada una en lugar de todo el ancho. */
+@media (min-width: 721px) and (max-height: 520px) {
+  .legend { right: auto; width: min(430px, 52vw); }
+  .country-panel { top: auto; left: auto; right: 8px; bottom: 8px; width: min(300px, 40vw); max-height: 62dvh; }
 }
 
 /* ---- Motor gráfico: laboratorio (temporal) ---- */

@@ -74,6 +74,14 @@ const aim = (cam: GlobeCamera, lat: number, lng: number) => cam.project(geoToVec
   odd.setQuakes([q(0, 0)]);
   assert.equal(odd.debugInstances().floats[6], 0, 'a nonsense radius becomes zero, not NaN');
   assert.equal(odd.height, 0.001, 'a degenerate height is raised');
+
+  // the camera can ask for shorter prisms when it is nearly as low as they are tall
+  layer.setHeightScale(0.5);
+  close(layer.height, 0.009, 1e-9, 'half height');
+  layer.setHeightScale(0);
+  assert.equal(layer.height, 0.001, 'never fully flat: the 0.001 minimum height still applies');
+  layer.setHeightScale(7);
+  assert.equal(layer.height, 0.018, 'cannot grow past the styled height');
 }
 
 // --- levels of detail: dots are drawn with more sides as they grow on screen

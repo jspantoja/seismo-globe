@@ -76,6 +76,9 @@ código del proyecto, con pruebas propias (`npm test`) y un banco de pruebas en 
   lo giran con velocidad mientras se mantienen, `+`/`-` acercan y alejan, `0` o `Inicio` vuelven a
   la vista del planeta entero. La vista se anuncia por `aria-live` (país bajo el centro y altura),
   hay anillo de foco visible y con `prefers-reduced-motion` los vuelos son saltos instantáneos.
+- **Puntos que no se hinchan.** Los puntos de sismos se miden en grados, así que se encogen al acercarse
+  (hasta la altitud 0,15, la más cercana a la que vuela la aplicación) y, si se baja más a mano con el
+  pellizco, siguen encogiéndose para conservar su tamaño en pantalla (y los prismas se acortan).
 - **Precisión al hacer zoom.** Las posiciones se envían como pares (alto, bajo) en coma flotante
   relativos al ojo, para que los límites no tiemblen a pocos kilómetros de altura.
 - **Hover y clic sin trazado de rayos.** Se proyecta cada sismo a pantalla y gana el más cercano
@@ -83,6 +86,19 @@ código del proyecto, con pruebas propias (`npm test`) y un banco de pruebas en 
 - **Pérdida de contexto.** Si el navegador descarta el contexto WebGL, las capas se reconstruyen solas.
 
 Peso del JavaScript de la aplicación (producción, gzip): ~225 KB frente a ~779 KB con three.js.
+
+## Teléfonos y medidas en un dispositivo real
+
+En pantallas estrechas (≤ 720 px) y bajas (móvil en horizontal) la cabecera se compacta: periodo, magnitud
+y fuentes opcionales van en una fila que se desliza, las cuatro acciones (Estadísticas, Lista, Cerca de mí,
+Alertas) siguen a la vista, la ficha del país es una tarjeta sobre la leyenda y la leyenda se pliega
+(el aviso «no es un sistema oficial de alerta temprana» y las fuentes opcionales activas no se pliegan).
+Se verificó con un teléfono emulado en Playwright (táctil, pellizco, 390×844 y horizontal); esas pruebas de navegador no están en el repositorio, solo las unitarias de `npm test`.
+
+Para medir en un teléfono o portátil reales, añade **`?diag=1`** a la dirección (`?diag=0` lo quita; se
+recuerda en la pestaña). Aparece un panel con fps, ms por fotograma al moverse, tamaño y resolución del
+lienzo (incluida la que baja la resolución adaptable), nivel de detalle de los países y la GPU que informa
+el navegador; si es de software lo avisa. Tocar el panel copia el texto para pegarlo en un mensaje.
 
 ## Enlaces compartibles
 

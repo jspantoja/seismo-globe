@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { DETAIL_ENTER_ALTITUDE, DETAIL_LEAVE_ALTITUDE, DETAIL_PRELOAD_ALTITUDE, describeView, distanceWords, pointScaleFor, wantsDetail } from '../lib/globeView';
+import { DETAIL_ENTER_ALTITUDE, DETAIL_LEAVE_ALTITUDE, DETAIL_PRELOAD_ALTITUDE, describeView, distanceWords, heightScaleFor, pointScaleFor, wantsDetail } from '../lib/globeView';
 
 // level of detail: hysteresis around the switch
 assert.ok(DETAIL_ENTER_ALTITUDE < DETAIL_LEAVE_ALTITUDE && DETAIL_LEAVE_ALTITUDE < DETAIL_PRELOAD_ALTITUDE, 'enter < leave < preload');
@@ -22,6 +22,24 @@ assert.equal(flips, 0, 'no flips inside the hysteresis band');
 // the dot scale is unchanged
 assert.equal(pointScaleFor(2.2), 1);
 assert.equal(pointScaleFor(0.15), 0.3);
+assert.equal(pointScaleFor(1), 0.6, 'unchanged in the usual range');
+
+// pinching in beyond the closest flight: the scale keeps shrinking so dots keep their on-screen size
+{
+  const at = (a: number) => pointScaleFor(a);
+  assert.ok(at(0.075) < at(0.15) && at(0.03) < at(0.075), 'smaller the closer it gets');
+  // on screen a dot is about scale / altitude: it must stay within a factor of 1.5 of what it was at 0.15
+  const apparent = (a: number) => at(a) / a;
+  for (const a of [0.1, 0.05, 0.03, 0.015]) {
+    assert.ok(apparent(a) <= apparent(0.15) * 1.5, `dot at altitude ${a} no bigger than 1.5x its size at 0.15 (${apparent(a).toFixed(2)} vs ${apparent(0.15).toFixed(2)})`);
+  }
+  assert.ok(at(0.004) >= 0.025, 'never vanishes');
+  assert.ok(Number.isFinite(at(0)) && at(0) > 0, 'altitude 0 is safe');
+  assert.equal(heightScaleFor(2.2), 1);
+  assert.equal(heightScaleFor(0.15), 1, 'no change up to the closest flight');
+  assert.ok(heightScaleFor(0.03) < 0.25 && heightScaleFor(0.03) >= 0.1, 'prisms shorten when the camera is nearly as low as they are tall');
+  assert.equal(heightScaleFor(0.001), 0.1, 'never below a tenth');
+}
 
 // what is said after keyboard navigation
 assert.equal(distanceWords(0.1), 'muy cerca');

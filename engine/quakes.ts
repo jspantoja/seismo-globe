@@ -130,6 +130,7 @@ export class QuakeLayer<Q extends QuakeLike = QuakeLike> implements EngineLayer 
   private quakes: Q[] = [];
   private host: LayerHost | null = null;
   private scale = 1;
+  private heightFactor = 1;
   private readonly lod: QuakeLod[];
 
   // CPU side: kept for picking and to rebuild the GPU buffers after a lost context.
@@ -164,7 +165,15 @@ export class QuakeLayer<Q extends QuakeLike = QuakeLike> implements EngineLayer 
 
   /** Height of a prism in globe radii. */
   get height(): number {
-    return Math.max(this.style.altitude, MIN_HEIGHT);
+    return Math.max(this.style.altitude * this.heightFactor, MIN_HEIGHT);
+  }
+
+  /** Multiplies the prisms' height (1 = as styled): a camera nearly as low as the prisms are tall sees them as streaks. */
+  setHeightScale(factor: number): void {
+    const f = Math.min(1, Math.max(0.02, factor));
+    if (f === this.heightFactor) return;
+    this.heightFactor = f;
+    this.host?.requestRender();
   }
 
   get zoomScale(): number {
