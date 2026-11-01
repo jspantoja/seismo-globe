@@ -2,6 +2,8 @@ import { ResolutionGovernor } from './adaptive';
 import { GlobeCamera, type Pov } from './camera';
 import { GlobeControls, type ControlEvents } from './controls';
 import { loadImageFirst, makeBuffer, makeProgram, parseColor, type Program } from './glcore';
+import { FrameLoop } from './frameLoop';
+import { GpuTimer } from './gpuTimer';
 import { GLOBE_FRAG, GLOBE_VERT } from './shaders';
 
 /**
@@ -48,6 +50,8 @@ export interface LayerHost {
 }
 
 export interface EngineLayer {
+  /** Short name for the diagnostics panel's GPU time per layer. */
+  readonly label?: string;
   /** Called when the layer is added: keep `host` to ask for a frame when the layer's data changes. */
   attach?(host: LayerHost): void;
   /**
@@ -78,6 +82,8 @@ export interface EngineOptions {
   minRenderScale?: number;
   /** Wrap the draw calls so the engine can count them (for measuring). */
   countDrawCalls?: boolean;
+  /** Time the GPU per layer where the browser allows it (EXT_disjoint_timer_query_webgl2); for measuring. */
+  gpuTiming?: boolean;
   onPov?: (pov: Pov) => void;
   onTextureError?: (err: unknown) => void;
 }
@@ -119,6 +125,10 @@ export interface EngineDiagnostics {
   moving: boolean;
   /** The graphics driver the browser reports ("" when it hides it). */
   renderer: string;
+  /** Samples per pixel of the drawing buffer (0 or 1 means no multisampling). */
+  samples: number;
+  /** Smoothed GPU milliseconds per layer (and `total`); null when the browser has no GPU timer. Empty until results arrive. */
+  gpuMs: Record<string, number> | null;
 }
 
 const SETTLE_MS = 220; // the view counts as at rest this long after the last moving frame
@@ -153,7 +163,7 @@ export class GlobeEngine {
   private earthImage: HTMLImageElement | null = null;
   private layers: EngineLayer[] = [];
 
-  private raf = 0;
+  private readonly loop = new FrameLoop(() => this.frame());
   private dirty = true;
   private lost = false;
   private destroyed = false;
@@ -170,6 +180,7 @@ export class GlobeEngine {
   private renderScale = 1; // set by the caller (setRenderScale)
   private readonly governor: ResolutionGovernor | null;
   private rendererName: string | null = null;
+  private gpuTimer: GpuTimer | null = null;
   private moving = false; // frames of camera motion are being drawn (the governor's scale applies)
   private lastMotionFrame = 0;
   private settleTimer: ReturnType<typeof setTimeout> | 0 = 0;
@@ -269,8 +280,8 @@ export class GlobeEngine {
   /** Asks for a frame. Many calls in the same tick draw once. */
   requestRender(): void {
     this.dirty = true;
-    if (this.raf || this.destroyed || this.lost) return;
-    this.raf = requestAnimationFrame(this.frame);
+    if (this.destroyed || this.lost) return;
+    this.loop.request();
   }
 
   flyTo(pov: Pov, durationMs: number): void {
@@ -317,6 +328,8 @@ export class GlobeEngine {
       frameMs: this.governor ? this.governor.lastMedianMs : null,
       moving: this.moving,
       renderer: (this.rendererName ??= readRendererName(this.gl)),
+      samples: Number(this.gl.getParameter(this.gl.SAMPLES)) || 0,
+      gpuMs: this.gpuTimer && this.gpuTimer.supported ? this.gpuTimer.snapshot() : null,
     };
   }
 
@@ -355,8 +368,7 @@ export class GlobeEngine {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    if (this.raf) cancelAnimationFrame(this.raf);
-    this.raf = 0;
+    this.loop.cancel();
     if (this.settleTimer) clearTimeout(this.settleTimer);
     this.settleTimer = 0;
     this.resizeObserver?.disconnect();
@@ -398,6 +410,7 @@ export class GlobeEngine {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
     this.uploadTexture();
+    this.gpuTimer = this.options.gpuTiming ? new GpuTimer(gl) : null; // after a lost context the old queries are gone with it
   }
 
   private releaseGL(): void {
@@ -473,8 +486,7 @@ export class GlobeEngine {
     ev.preventDefault(); // we want it back
     this.lost = true;
     this.stats.contextLosses++;
-    if (this.raf) cancelAnimationFrame(this.raf);
-    this.raf = 0;
+    this.loop.cancel();
     // Every GPU object died with the context: forget the handles (deleting them now would be an error).
     this.texture = null;
     this.quad = null;
@@ -526,7 +538,6 @@ export class GlobeEngine {
   }
 
   private frame = (): void => {
-    this.raf = 0;
     if (this.destroyed || this.lost) return;
     const now = performance.now();
     const keyMoved = this.controls.update(now);
@@ -546,9 +557,8 @@ export class GlobeEngine {
 
     this.trackFps(now, mustDraw || layerAnim || cameraAnim);
 
-    if (cameraAnim || layerAnim || this.dirty) {
-      this.raf = requestAnimationFrame(this.frame);
-    }
+    // request() queues nothing if a redraw asked for the next callback while this frame ran: one chain only.
+    if (cameraAnim || layerAnim || this.dirty) this.loop.request();
   };
 
   /** Feeds the governor the gap between motion frames; draws at full resolution once motion stops. */
@@ -618,6 +628,9 @@ export class GlobeEngine {
     if (sinceLast > 0 && sinceLast < 2000) this.frameGap = this.frameGap * 0.7 + sinceLast * 0.3;
     this.lastRender = now;
 
+    const timer = this.gpuTimer;
+    timer?.startFrame();
+    timer?.begin('globo');
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.disable(gl.SCISSOR_TEST);
     gl.depthMask(true);
@@ -627,7 +640,12 @@ export class GlobeEngine {
     this.drawGlobe();
 
     const frame: FrameContext = { gl, camera: cam, width: this.cssWidth, height: this.cssHeight, pixelRatio: this.pixelRatio, now };
-    for (const layer of this.layers) layer.draw(frame);
+    for (const layer of this.layers) {
+      timer?.begin(layer.label ?? 'capa');
+      layer.draw(frame);
+    }
+    timer?.end();
+    timer?.poll();
 
     this.stats.frames++;
     this.stats.drawCalls = this.drawCalls;

@@ -256,32 +256,47 @@ uniform vec3 u_eyeLo;
 uniform float u_scale;
 uniform float u_height;
 uniform vec3 u_light;
+uniform vec3 u_eyeDir;  // unit vector from the globe's centre to the camera
+uniform vec2 u_cull;    // cos and sin of the farthest angle from u_eyeDir at which a prism can still be seen
+uniform vec2 u_fov;     // how fast clip x and y grow with distance from the view axis (the projection's scales)
 out vec3 v_color;
 
-vec3 toLinear(vec3 c) {
-  vec3 lo = c / 12.92;
-  vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
-  return mix(lo, hi, step(vec3(0.04045), c));
-}
-vec3 toSrgb(vec3 c) {
-  vec3 lo = c * 12.92;
-  vec3 hi = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
-  return mix(lo, hi, step(vec3(0.0031308), c));
-}
-
 void main() {
+  float r = i_radius * u_scale;
+  float reach = r + u_height; // every point of the prism is within this distance of its base centre
+
+  // Most of the thousands of prisms are out of sight at any moment (behind the planet, or outside the
+  // picture). Those leave through a clipped corner after one dot product and one matrix row set: the
+  // rest of the work (basis, offset, shading) and the rasterising of their triangles is skipped. The
+  // tests are conservative: a prism that could show a single pixel is kept.
+  float slack = 2.0 * r; // r for the base's reach sideways, and r more because a corner of the prism sits r²/2 above the surface
+  if (dot(i_hi, u_eyeDir) < u_cull.x - slack * u_cull.y - slack * slack) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    v_color = vec3(0.0);
+    return;
+  }
+  vec3 centre = (i_hi - u_eyeHi) + (i_lo - u_eyeLo);
+  vec4 cp = u_mvp * vec4(centre, 1.0);
+  vec2 edge = reach * (u_fov + 1.0);
+  if (min(cp.x + cp.w, cp.w - cp.x) < -edge.x || min(cp.y + cp.w, cp.w - cp.y) < -edge.y) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    v_color = vec3(0.0);
+    return;
+  }
+
   vec3 n = normalize(i_hi);
   vec3 axis = abs(n.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
   vec3 t1 = normalize(cross(axis, n));
   vec3 t2 = cross(n, t1);
-  float r = i_radius * u_scale;
   vec3 offset = (t1 * a_local.x + t2 * a_local.y) * r + n * (a_local.z * u_height);
-  vec3 rel = (i_hi - u_eyeHi) + (i_lo - u_eyeLo) + offset;
+  vec3 rel = centre + offset;
   gl_Position = u_mvp * vec4(rel, 1.0);
 
   vec3 wn = t1 * a_normal.x + t2 * a_normal.y + n * a_normal.z;
   float shade = 0.8 + 0.45 * max(dot(wn, u_light), 0.0);
-  v_color = toSrgb(toLinear(i_color.rgb) * shade);
+  // Shading in linear light would cost six pow() per vertex; scaling the sRGB colour by sqrt(shade)
+  // (a gamma of 2 instead of 2.2) lands within ~1.5% of it for the colours and light used here.
+  v_color = i_color.rgb * sqrt(shade);
 }
 `;
 

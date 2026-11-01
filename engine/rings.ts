@@ -112,6 +112,7 @@ function sameParams(a: RingSpec, b: RingSpec): boolean {
 }
 
 export class RingLayer implements EngineLayer {
+  readonly label = 'anillos';
   private entries = new Map<string | number, Entry>();
   private host: LayerHost | null = null;
   private readonly period: number;

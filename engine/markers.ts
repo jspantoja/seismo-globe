@@ -48,6 +48,7 @@ interface Placed {
 }
 
 export class MarkerLayer implements EngineLayer {
+  readonly label = 'marcadores';
   private host: LayerHost | null = null;
   private placed = new Map<string | number, Placed>();
   private readonly screen: ScreenPoint = { x: 0, y: 0, depth: 0, w: 0 };

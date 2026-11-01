@@ -81,6 +81,15 @@ código del proyecto, con pruebas propias (`npm test`) y un banco de pruebas en 
   pellizco, siguen encogiéndose para conservar su tamaño en pantalla (y los prismas se acortan).
 - **Precisión al hacer zoom.** Las posiciones se envían como pares (alto, bajo) en coma flotante
   relativos al ojo, para que los límites no tiemblen a pocos kilómetros de altura.
+- **Los sismos fuera de vista casi no cuestan.** Cada sismo es un prisma; con ~8 500 en pantalla serían unos 600 000
+  vértices por fotograma. El sombreador de vértices descarta en cuanto empieza los que quedan detrás del horizonte
+  (contando que la punta de un prisma alto asoma más allá del borde) o fuera del encuadre, y el resto del trabajo y
+  el rasterizado de sus triángulos se omiten. La prueba es conservadora: un prisma que pueda enseñar un solo píxel se
+  conserva (`tests/engineQuakeCull.test.mts` lo comprueba con geometría y la imagen resultante es idéntica). El
+  sombreado de cada cara usa `sqrt` en lugar de seis `pow` (diferencia ≤ 4/255 en color).
+- **Un solo hilo de fotogramas.** Pedir un redibujado durante un fotograma ya no encola un segundo
+  `requestAnimationFrame` (`engine/frameLoop.ts`): antes, desde ese momento corrían dos cadenas en paralelo y los fps y
+  la resolución adaptable medían huecos de ~0 ms (un portátil de 60 Hz llegó a informar de 206 fps).
 - **Hover y clic sin trazado de rayos.** Se proyecta cada sismo a pantalla y gana el más cercano
   al puntero entre los que miran a la cámara (~0,5 ms para 20 000 sismos).
 - **Pérdida de contexto.** Si el navegador descarta el contexto WebGL, las capas se reconstruyen solas.
@@ -98,7 +107,11 @@ Se verificó con un teléfono emulado en Playwright (táctil, pellizco, 390×844
 Para medir en un teléfono o portátil reales, añade **`?diag=1`** a la dirección (`?diag=0` lo quita; se
 recuerda en la pestaña). Aparece un panel con fps, ms por fotograma al moverse, tamaño y resolución del
 lienzo (incluida la que baja la resolución adaptable), nivel de detalle de los países y la GPU que informa
-el navegador; si es de software lo avisa. Tocar el panel copia el texto para pegarlo en un mensaje.
+el navegador; si es de software lo avisa. Además muestra el suavizado MSAA, si los paneles tienen desenfoque de
+fondo y, donde el navegador lo permite (Chrome y derivados de escritorio, `EXT_disjoint_timer_query_webgl2`), los
+milisegundos de **GPU por capa** (globo, áreas, líneas, sismos, anillos): así se ve si un equipo va lento por el
+globo, por los sismos o por algo que no es el dibujo (si el total de GPU es mucho menor que los ms por fotograma, el
+cuello de botella está fuera: compositor, desenfoque, suavizado). Tocar el panel copia el texto para pegarlo en un mensaje.
 
 ## Enlaces compartibles
 

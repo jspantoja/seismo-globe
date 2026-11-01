@@ -32,6 +32,8 @@ export interface DiagExtras {
   /** Which country outlines are drawn: the coarse or the fine set. */
   detail: '110m' | '50m';
   quakes: number;
+  /** Whether the page's panels blur what is behind them (a cost the compositor pays on every frame of the globe). */
+  glass?: boolean;
 }
 
 const SOFTWARE_RENDERER = /swiftshader|llvmpipe|softpipe|software|basic render/i;
@@ -43,6 +45,23 @@ export function isSoftwareRenderer(name: string): boolean {
 
 const one = (n: number) => (Math.round(n * 10) / 10).toString();
 
+const LAYER_ORDER = ['globo', 'áreas', 'líneas', 'sismos', 'anillos', 'marcadores'];
+
+/** "globo 1.2 · sismos 9.4 · … · total 11.8": the GPU time of each layer, in the order they are drawn. */
+function gpuLine(gpuMs: EngineDiagnostics['gpuMs']): string {
+  if (gpuMs === null) return 'GPU por capa: este navegador no tiene medidor';
+  const labels = Object.keys(gpuMs).filter((k) => k !== 'total');
+  if (labels.length === 0) return 'GPU por capa: midiendo… (mueve el globo)';
+  labels.sort((a, b) => {
+    const ia = LAYER_ORDER.indexOf(a);
+    const ib = LAYER_ORDER.indexOf(b);
+    return (ia === -1 ? LAYER_ORDER.length : ia) - (ib === -1 ? LAYER_ORDER.length : ib);
+  });
+  const parts = labels.map((k) => `${k} ${one(gpuMs[k])}`);
+  if (typeof gpuMs.total === 'number') parts.push(`total ${one(gpuMs.total)}`);
+  return `GPU por capa (ms): ${parts.join(' · ')}`;
+}
+
 /** The panel text, one fact per line (plain text so it can be copied and pasted into a message). */
 export function formatDiagnostics(d: EngineDiagnostics, extra: DiagExtras): string {
   const lines: string[] = [];
@@ -52,8 +71,12 @@ export function formatDiagnostics(d: EngineDiagnostics, extra: DiagExtras): stri
   const scale = d.adaptiveScale === null ? 'fija' : `${d.adaptiveScale.toFixed(2)}× al moverse`;
   lines.push(`lienzo ${d.canvasWidth}×${d.canvasHeight} px · DPR ${one(d.devicePixelRatio)} · resolución ${d.pixelRatio.toFixed(2)}× (${scale})`);
   lines.push(`países ${extra.detail} · ${extra.quakes} sismos${d.moving ? ' · en movimiento' : ''}`);
+  const effects = [d.samples > 1 ? `suavizado ${d.samples}× (MSAA)` : 'sin suavizado MSAA'];
+  if (extra.glass !== undefined) effects.push(`desenfoque de paneles ${extra.glass ? 'sí' : 'no'}`);
+  lines.push(effects.join(' · '));
   const gpu = d.renderer ? `${d.renderer}${isSoftwareRenderer(d.renderer) ? ' (por software: las cifras no valen)' : ''}` : 'no informada por el navegador';
   lines.push(`GPU: ${gpu}`);
+  lines.push(gpuLine(d.gpuMs));
   if (d.contextLosses > 0) lines.push(`contexto WebGL perdido ${d.contextLosses} ${d.contextLosses === 1 ? 'vez' : 'veces'}`);
   return lines.join('\n');
 }

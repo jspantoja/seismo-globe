@@ -170,6 +170,7 @@ class LineRenderer {
 
 /** Filled areas with outlines: countries, regions, a tectonic plate. */
 export class AreaLayer<T = unknown> implements EngineLayer {
+  readonly label = 'áreas';
   private readonly assembler = new AreaAssembler<T>();
   private assembled: AssembledAreas | null = null;
   private gl: WebGL2RenderingContext | null = null;
@@ -263,6 +264,7 @@ interface StoredLine<T> {
 
 /** Plain lines on the surface: plate boundaries, a radius ring. */
 export class LineLayer<T = unknown> implements EngineLayer {
+  readonly label = 'líneas';
   private lines: StoredLine<T>[] = [];
   private data: { bytes: Uint8Array; count: number } | null = null;
   private renderer = new LineRenderer();

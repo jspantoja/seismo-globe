@@ -207,6 +207,7 @@ export default function GlobeCanvas({
     try {
       engine = new GlobeEngine(host, {
         countDrawCalls: diagOn,
+        gpuTiming: diagOn,
         textureUrls: EARTH_TEXTURES,
         atmosphereColor: '#4fd1c5',
         atmosphereAltitude: 0.15,
@@ -541,7 +542,14 @@ export default function GlobeCanvas({
       const el = diagRef.current;
       const L = layersRef.current;
       if (!el || !L) return;
-      el.textContent = formatDiagnostics(L.engine.diagnostics(), diagExtraRef.current);
+      let glass: boolean | undefined;
+      const panel = document.querySelector('.panel');
+      if (panel) {
+        const style = getComputedStyle(panel);
+        const filter = style.getPropertyValue('backdrop-filter') || style.getPropertyValue('-webkit-backdrop-filter');
+        glass = Boolean(filter) && filter !== 'none';
+      }
+      el.textContent = formatDiagnostics(L.engine.diagnostics(), { ...diagExtraRef.current, glass });
     };
     update();
     const id = window.setInterval(update, 500);

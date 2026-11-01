@@ -127,6 +127,7 @@ const ORDER_SPAN = 1048576; // sort keys are radius * ORDER_SPAN + index: room f
 const MIN_HEIGHT = 0.001;
 
 export class QuakeLayer<Q extends QuakeLike = QuakeLike> implements EngineLayer {
+  readonly label = 'sismos';
   private quakes: Q[] = [];
   private host: LayerHost | null = null;
   private scale = 1;
@@ -333,7 +334,7 @@ export class QuakeLayer<Q extends QuakeLike = QuakeLike> implements EngineLayer 
   // ------------------------------------------------------------------ GPU
 
   init(gl: WebGL2RenderingContext): void {
-    this.prog = makeProgram(gl, 'quake', QUAKE_VERT, QUAKE_FRAG, ['u_mvp', 'u_eyeHi', 'u_eyeLo', 'u_scale', 'u_height', 'u_light']);
+    this.prog = makeProgram(gl, 'quake', QUAKE_VERT, QUAKE_FRAG, ['u_mvp', 'u_eyeHi', 'u_eyeLo', 'u_scale', 'u_height', 'u_light', 'u_eyeDir', 'u_cull', 'u_fov']);
     this.instanceBuffer = gl.createBuffer();
     this.levels = this.lod.map((l) => {
       const tmpl = prismTemplate(l.sides);
@@ -392,6 +393,10 @@ export class QuakeLayer<Q extends QuakeLike = QuakeLike> implements EngineLayer 
     gl.uniform1f(u.u_scale, this.scale);
     gl.uniform1f(u.u_height, this.height);
     gl.uniform3f(u.u_light, light[0], light[1], light[2]);
+    const cull = visibility(split.hi, split.lo, this.height, cam.fovY, cam.aspect);
+    gl.uniform3f(u.u_eyeDir, cull.dir[0], cull.dir[1], cull.dir[2]);
+    gl.uniform2f(u.u_cull, cull.cos, cull.sin);
+    gl.uniform2f(u.u_fov, cull.fx, cull.fy);
     const starts = lodRanges(this.sortedRadius, n, this.scale, cam.pixelsPerUnit(), this.lod);
     for (let level = 0; level < this.levels.length; level++) {
       const from = starts[level];
@@ -416,6 +421,51 @@ export class QuakeLayer<Q extends QuakeLike = QuakeLike> implements EngineLayer 
     this.levels = [];
     this.instanceBuffer = null;
   }
+}
+
+/**
+ * What the vertex shader needs to throw away the prisms that cannot be seen. A prism stands on the
+ * surface at angle θ from the point under the camera; its base is hidden by the planet beyond the
+ * horizon angle acos(1/d), but its top, at height `height`, still shows up to acos(1/(1+height)) farther
+ * (a spike against the sky beyond the limb), so the cut-off is the sum of both. The projection's x and
+ * y scales bound how far a point at a given distance can reach into the picture.
+ */
+export function visibility(eyeHi: ArrayLike<number>, eyeLo: ArrayLike<number>, height: number, fovY: number, aspect: number) {
+  const x = eyeHi[0] + eyeLo[0];
+  const y = eyeHi[1] + eyeLo[1];
+  const z = eyeHi[2] + eyeLo[2];
+  const d = Math.max(1e-9, Math.hypot(x, y, z));
+  const horizon = Math.acos(Math.min(1, 1 / d));
+  const top = Math.acos(1 / (1 + Math.max(0, height)));
+  const angle = Math.min(Math.PI, horizon + top);
+  const fy = 1 / Math.tan(fovY / 2);
+  return { dir: [x / d, y / d, z / d] as [number, number, number], cos: Math.cos(angle), sin: Math.sin(angle), fx: fy / aspect, fy };
+}
+
+/**
+ * The vertex shader's culling test, in JavaScript, so the tests can check it against geometry: true
+ * when the prism standing at unit vector `n` (radius `r`, height `height`, in globe radii) cannot show
+ * a single pixel. `clip` is the camera's rotation × projection and `eye` its position.
+ */
+export function quakeCulled(
+  n: ArrayLike<number>,
+  r: number,
+  height: number,
+  eye: ArrayLike<number>,
+  clip: ArrayLike<number>,
+  fovY: number,
+  aspect: number,
+): boolean {
+  const v = visibility(eye, [0, 0, 0], height, fovY, aspect);
+  const slack = 2 * r;
+  if (n[0] * v.dir[0] + n[1] * v.dir[1] + n[2] * v.dir[2] < v.cos - slack * v.sin - slack * slack) return true;
+  const c = [n[0] - eye[0], n[1] - eye[1], n[2] - eye[2]];
+  const row = (k: number) => clip[k] * c[0] + clip[4 + k] * c[1] + clip[8 + k] * c[2] + clip[12 + k]; // column-major
+  const x = row(0);
+  const y = row(1);
+  const w = row(3);
+  const reach = r + height;
+  return Math.min(x + w, w - x) < -reach * (v.fx + 1) || Math.min(y + w, w - y) < -reach * (v.fy + 1);
 }
 
 const scratchHi = new Float32Array(3);
