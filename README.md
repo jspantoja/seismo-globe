@@ -109,7 +109,7 @@ recuerda en la pestaña). Aparece un panel con fps, ms por fotograma al moverse,
 lienzo (incluida la que baja la resolución adaptable), nivel de detalle de los países y la GPU que informa
 el navegador; si es de software lo avisa. Además muestra el suavizado MSAA, si los paneles tienen desenfoque de
 fondo y, donde el navegador lo permite (Chrome y derivados de escritorio, `EXT_disjoint_timer_query_webgl2`), los
-milisegundos de **GPU por capa** (globo, áreas, líneas, sismos, anillos): así se ve si un equipo va lento por el
+milisegundos de **GPU por capa** (globo, áreas, líneas, sismos, anillos; los de fotogramas con el globo en movimiento, y si todavía no se movió, los de un redibujado en reposo, que lo dice): así se ve si un equipo va lento por el
 globo, por los sismos o por algo que no es el dibujo (si el total de GPU es mucho menor que los ms por fotograma, el
 cuello de botella está fuera: compositor, desenfoque, suavizado). Tocar el panel copia el texto para pegarlo en un mensaje.
 Para saber cuánto cuestan esos dos efectos en un equipo concreto, **`?msaa=0`** quita el suavizado MSAA (el búfer

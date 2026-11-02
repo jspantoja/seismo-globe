@@ -87,6 +87,7 @@ const base: EngineDiagnostics = {
   renderer: 'Apple GPU',
   samples: 4,
   gpuMs: null,
+  gpuWhile: null,
 };
 {
   const t = formatDiagnostics(base, { detail: '110m', quakes: 8000 });
@@ -119,7 +120,9 @@ const base: EngineDiagnostics = {
   const waiting = formatDiagnostics({ ...base, gpuMs: {} }, { detail: '110m', quakes: 1 });
   assert.match(waiting, /GPU por capa: midiendo… \(mueve el globo\)/);
   const t = formatDiagnostics({ ...base, gpuMs: { total: 12.04, sismos: 9.43, globo: 1.2, marcadores: 0.01, 'áreas': 0.8, otra: 0.6 } }, { detail: '110m', quakes: 1 });
-  assert.match(t, /GPU por capa \(ms\): globo 1\.2 · áreas 0\.8 · sismos 9\.4 · marcadores 0 · otra 0\.6 · total 12$/m, 'layers in drawing order, unknown ones after, total last');
+  assert.match(t, /GPU por capa al moverse \(ms\): globo 1\.2 · áreas 0\.8 · sismos 9\.4 · marcadores 0 · otra 0\.6 · total 12$/m, 'layers in drawing order, unknown ones after, total last');
+  const still = formatDiagnostics({ ...base, gpuMs: { globo: 1.7, total: 1.7 }, gpuWhile: 'rest' }, { detail: '110m', quakes: 1 });
+  assert.match(still, /GPU por capa en reposo, sin mover \(ms\): globo 1\.7 · total 1\.7$/m, 'a reading taken at rest says so');
 }
 
 {

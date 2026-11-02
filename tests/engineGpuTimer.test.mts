@@ -164,4 +164,24 @@ function spyQueries(f: ReturnType<typeof fakeGl>): object[] {
   assert.deepEqual(t.snapshot(), {}, 'queries of the old context are forgotten');
 }
 
+// --- frames of different groups are smoothed apart
+{
+  const f = fakeGl();
+  const made = spyQueries(f);
+  const t = new GpuTimer(f.gl);
+  const run = (group: string, ms: number) => {
+    t.startFrame(group);
+    t.begin('sismos');
+    t.end();
+    f.finish(made[made.length - 1], ms * 1e6);
+    t.poll();
+  };
+  run('moving', 12);
+  run('moving', 12);
+  run('rest', 2);
+  assert.ok(Math.abs(t.snapshot('moving').sismos - 12) < 1e-9, 'a redraw at rest does not touch the numbers of a drag');
+  assert.ok(Math.abs(t.snapshot('rest').sismos - 2) < 1e-9);
+  assert.deepEqual(t.snapshot('nothing'), {});
+}
+
 console.log('engineGpuTimer ok');

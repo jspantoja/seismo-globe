@@ -80,7 +80,7 @@ const one = (n: number) => (Math.round(n * 10) / 10).toString();
 const LAYER_ORDER = ['globo', 'áreas', 'líneas', 'sismos', 'anillos', 'marcadores'];
 
 /** "globo 1.2 · sismos 9.4 · … · total 11.8": the GPU time of each layer, in the order they are drawn. */
-function gpuLine(gpuMs: EngineDiagnostics['gpuMs']): string {
+function gpuLine(gpuMs: EngineDiagnostics['gpuMs'], when: EngineDiagnostics['gpuWhile']): string {
   if (gpuMs === null) return 'GPU por capa: este navegador no tiene medidor';
   const labels = Object.keys(gpuMs).filter((k) => k !== 'total');
   if (labels.length === 0) return 'GPU por capa: midiendo… (mueve el globo)';
@@ -91,7 +91,7 @@ function gpuLine(gpuMs: EngineDiagnostics['gpuMs']): string {
   });
   const parts = labels.map((k) => `${k} ${one(gpuMs[k])}`);
   if (typeof gpuMs.total === 'number') parts.push(`total ${one(gpuMs.total)}`);
-  return `GPU por capa (ms): ${parts.join(' · ')}`;
+  return `GPU por capa ${when === 'rest' ? 'en reposo, sin mover (ms)' : 'al moverse (ms)'}: ${parts.join(' · ')}`;
 }
 
 /** The panel text, one fact per line (plain text so it can be copied and pasted into a message). */
@@ -108,7 +108,7 @@ export function formatDiagnostics(d: EngineDiagnostics, extra: DiagExtras): stri
   lines.push(effects.join(' · '));
   const gpu = d.renderer ? `${d.renderer}${isSoftwareRenderer(d.renderer) ? ' (por software: las cifras no valen)' : ''}` : 'no informada por el navegador';
   lines.push(`GPU: ${gpu}`);
-  lines.push(gpuLine(d.gpuMs));
+  lines.push(gpuLine(d.gpuMs, d.gpuWhile));
   if (d.contextLosses > 0) lines.push(`contexto WebGL perdido ${d.contextLosses} ${d.contextLosses === 1 ? 'vez' : 'veces'}`);
   return lines.join('\n');
 }

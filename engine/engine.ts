@@ -131,6 +131,8 @@ export interface EngineDiagnostics {
   samples: number;
   /** Smoothed GPU milliseconds per layer (and `total`); null when the browser has no GPU timer. Empty until results arrive. */
   gpuMs: Record<string, number> | null;
+  /** Whether gpuMs comes from frames drawn while the view moved or from still redraws (used only when none moved yet). */
+  gpuWhile: 'moving' | 'rest' | null;
 }
 
 const SETTLE_MS = 220; // the view counts as at rest this long after the last moving frame
@@ -331,8 +333,17 @@ export class GlobeEngine {
       moving: this.moving,
       renderer: (this.rendererName ??= readRendererName(this.gl)),
       samples: Number(this.gl.getParameter(this.gl.SAMPLES)) || 0,
-      gpuMs: this.gpuTimer && this.gpuTimer.supported ? this.gpuTimer.snapshot() : null,
+      ...this.gpuDiagnostics(),
     };
+  }
+
+  private gpuDiagnostics(): Pick<EngineDiagnostics, 'gpuMs' | 'gpuWhile'> {
+    const timer = this.gpuTimer;
+    if (!timer || !timer.supported) return { gpuMs: null, gpuWhile: null };
+    const moving = timer.snapshot('moving');
+    if (Object.keys(moving).length > 0) return { gpuMs: moving, gpuWhile: 'moving' };
+    const rest = timer.snapshot('rest');
+    return { gpuMs: rest, gpuWhile: Object.keys(rest).length > 0 ? 'rest' : null };
   }
 
   get isLost(): boolean {
@@ -631,7 +642,7 @@ export class GlobeEngine {
     this.lastRender = now;
 
     const timer = this.gpuTimer;
-    timer?.startFrame();
+    timer?.startFrame(this.moving ? 'moving' : 'rest');
     timer?.begin('globo');
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.disable(gl.SCISSOR_TEST);
