@@ -135,6 +135,18 @@ export interface EngineDiagnostics {
   gpuWhile: 'moving' | 'rest' | null;
 }
 
+/** What the engine saw during a benchmark window (see startBenchmark). */
+export interface BenchmarkWindow {
+  /** Milliseconds between consecutive drawn frames. */
+  gaps: number[];
+  elapsedMs: number;
+  /** GPU milliseconds per layer over the window, null when the browser has no GPU timer. */
+  gpuMs: Record<string, number> | null;
+  pixelRatio: number;
+  canvasWidth: number;
+  canvasHeight: number;
+}
+
 const SETTLE_MS = 220; // the view counts as at rest this long after the last moving frame
 const PLACEHOLDER_RGB: [number, number, number] = [10, 18, 34];
 
@@ -185,6 +197,10 @@ export class GlobeEngine {
   private readonly governor: ResolutionGovernor | null;
   private rendererName: string | null = null;
   private gpuTimer: GpuTimer | null = null;
+  private readonly hiddenLayers = new Set<EngineLayer>();
+  private spinDegPerSec = 0; // the globe turns by itself while a benchmark runs
+  private spinClock = 0;
+  private bench: { gaps: number[]; lastDraw: number; startedAt: number } | null = null;
   private moving = false; // frames of camera motion are being drawn (the governor's scale applies)
   private lastMotionFrame = 0;
   private settleTimer: ReturnType<typeof setTimeout> | 0 = 0;
@@ -344,6 +360,63 @@ export class GlobeEngine {
     if (Object.keys(moving).length > 0) return { gpuMs: moving, gpuWhile: 'moving' };
     const rest = timer.snapshot('rest');
     return { gpuMs: rest, gpuWhile: Object.keys(rest).length > 0 ? 'rest' : null };
+  }
+
+  /** Hides or shows a layer without removing it (for measuring what each one costs). */
+  setLayerHidden(layer: EngineLayer, hidden: boolean): void {
+    if (hidden) this.hiddenLayers.add(layer);
+    else this.hiddenLayers.delete(layer);
+    this.requestRender();
+  }
+
+  /**
+   * Starts a benchmark: the globe turns by itself at `degPerSec` and every frame is drawn at full
+   * resolution (the adaptive scale is held out) until stopBenchmark(). benchmarkWindow() then opens a
+   * fresh measuring window and readBenchmark() says what it saw.
+   */
+  startBenchmark(degPerSec = 36): void {
+    this.bench = { gaps: [], lastDraw: 0, startedAt: performance.now() };
+    this.spinDegPerSec = degPerSec;
+    this.spinClock = 0;
+    this.measure();
+    this.requestRender();
+  }
+
+  benchmarkWindow(): void {
+    if (!this.bench) return;
+    this.bench = { gaps: [], lastDraw: 0, startedAt: performance.now() };
+    this.gpuTimer?.reset();
+  }
+
+  readBenchmark(): BenchmarkWindow {
+    const b = this.bench;
+    const timer = this.gpuTimer;
+    const gpu = timer && timer.supported ? timer.snapshot('moving') : null;
+    return {
+      gaps: b ? [...b.gaps] : [],
+      elapsedMs: b ? performance.now() - b.startedAt : 0,
+      gpuMs: gpu && Object.keys(gpu).length > 0 ? gpu : null,
+      pixelRatio: this.pixelRatio,
+      canvasWidth: this.canvas.width,
+      canvasHeight: this.canvas.height,
+    };
+  }
+
+  stopBenchmark(): void {
+    this.bench = null;
+    this.spinDegPerSec = 0;
+    this.hiddenLayers.clear();
+    this.measure();
+    this.requestRender();
+  }
+
+  private spinStep(now: number): void {
+    const dt = this.spinClock ? Math.min(100, now - this.spinClock) : 16;
+    this.spinClock = now;
+    const pov = this.camera.pov();
+    this.camera.setPov({ lat: pov.lat, lng: pov.lng + (this.spinDegPerSec * dt) / 1000, altitude: pov.altitude });
+    this.inputAt = now; // it counts as the view being moved, like a drag
+    this.dirty = true;
   }
 
   get isLost(): boolean {
@@ -518,7 +591,7 @@ export class GlobeEngine {
 
   /** The caller's scale, times the governor's while the view moves. */
   private effectiveScale(): number {
-    return this.renderScale * (this.moving && this.governor ? this.governor.scale : 1);
+    return this.renderScale * (this.moving && this.governor && !this.bench ? this.governor.scale : 1); // a benchmark measures at full resolution
   }
 
   private measure(): void {
@@ -553,6 +626,7 @@ export class GlobeEngine {
   private frame = (): void => {
     if (this.destroyed || this.lost) return;
     const now = performance.now();
+    if (this.spinDegPerSec !== 0) this.spinStep(now);
     const keyMoved = this.controls.update(now);
     const moved = this.camera.update(now) || keyMoved;
     const layerAnim = this.layersAnimating();
@@ -571,7 +645,7 @@ export class GlobeEngine {
     this.trackFps(now, mustDraw || layerAnim || cameraAnim);
 
     // request() queues nothing if a redraw asked for the next callback while this frame ran: one chain only.
-    if (cameraAnim || layerAnim || this.dirty) this.loop.request();
+    if (cameraAnim || layerAnim || this.dirty || this.spinDegPerSec !== 0) this.loop.request();
   };
 
   /** Feeds the governor the gap between motion frames; draws at full resolution once motion stops. */
@@ -583,7 +657,7 @@ export class GlobeEngine {
       this.lastMotionFrame = 0;
       governor.rest();
       this.measure(); // the scale learned so far applies from the first moving frame
-    } else if (this.lastMotionFrame > 0) {
+    } else if (this.lastMotionFrame > 0 && !this.bench) {
       if (governor.frame(now - this.lastMotionFrame, now) !== null) this.measure();
     }
     // A slow device has long gaps between frames: the view only counts as resting after clearly more than a gap.
@@ -642,7 +716,7 @@ export class GlobeEngine {
     this.lastRender = now;
 
     const timer = this.gpuTimer;
-    timer?.startFrame(this.moving ? 'moving' : 'rest');
+    timer?.startFrame(this.moving || this.bench ? 'moving' : 'rest');
     timer?.begin('globo');
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.disable(gl.SCISSOR_TEST);
@@ -654,12 +728,17 @@ export class GlobeEngine {
 
     const frame: FrameContext = { gl, camera: cam, width: this.cssWidth, height: this.cssHeight, pixelRatio: this.pixelRatio, now };
     for (const layer of this.layers) {
+      if (this.hiddenLayers.has(layer)) continue;
       timer?.begin(layer.label ?? 'capa');
       layer.draw(frame);
     }
     timer?.end();
     timer?.poll();
 
+    if (this.bench) {
+      if (this.bench.lastDraw > 0) this.bench.gaps.push(now - this.bench.lastDraw);
+      this.bench.lastDraw = now;
+    }
     this.stats.frames++;
     this.stats.drawCalls = this.drawCalls;
     this.stats.pixelRatio = this.pixelRatio;

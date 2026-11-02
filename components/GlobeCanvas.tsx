@@ -11,6 +11,7 @@ import {
   RingLayer,
   vecToGeo,
   type AreaSpec,
+  type EngineLayer,
   type LineSpec,
   type MarkerSpec,
   type QuakeStyle,
@@ -18,6 +19,7 @@ import {
 import type { BoundaryPath, QuakeFeature } from '@/lib/types';
 import { magColor, sourceLabel } from '@/lib/format';
 import { DETAIL_PRELOAD_ALTITUDE, describeView, heightScaleFor, pointScaleFor, wantsDetail } from '@/lib/globeView';
+import { formatBenchmark, runBenchmark, type BenchPhase, type BenchTarget } from '@/lib/benchmark';
 import { diagnosticsRequested, experimentFlags, formatDiagnostics, type DiagExtras } from '@/lib/diagnostics';
 
 /**
@@ -167,6 +169,10 @@ export default function GlobeCanvas({
   const [diag, setDiag] = useState(false);
   const diagRef = useRef<HTMLButtonElement>(null);
   const diagExtraRef = useRef<DiagExtras>({ detail: '110m', quakes: 0 });
+  const benchTextRef = useRef(''); // the last benchmark's report, shown under the diagnostics
+  const benchStatusRef = useRef(''); // progress line while one runs
+  const [benching, setBenching] = useState(false);
+  const benchingRef = useRef(false);
   // Level of detail: the camera asks for the fine borders (wantFine) and they are used once prepared (fineReady).
   const [wantFine, setWantFine] = useState(false);
   const [fineReady, setFineReady] = useState(false);
@@ -557,12 +563,69 @@ export default function GlobeCanvas({
         const filter = style.getPropertyValue('backdrop-filter') || style.getPropertyValue('-webkit-backdrop-filter');
         glass = Boolean(filter) && filter !== 'none';
       }
-      el.textContent = formatDiagnostics(L.engine.diagnostics(), { ...diagExtraRef.current, glass });
+      const text = formatDiagnostics(L.engine.diagnostics(), { ...diagExtraRef.current, glass });
+      const bench = benchStatusRef.current || benchTextRef.current;
+      el.textContent = bench ? `${text}\n\n${bench}` : text;
     };
     update();
     const id = window.setInterval(update, 500);
     return () => window.clearInterval(id);
   }, [diag, ready]);
+
+  // The "Medir" button: the globe spins by itself and the page measures a few seconds per phase, switching
+  // one thing off at a time. Nothing else is touched afterwards: pov, layers and the blur are put back.
+  const runMeasurement = useCallback(async () => {
+    const L = layersRef.current;
+    if (!L || benchingRef.current) return;
+    benchingRef.current = true;
+    setBenching(true);
+    benchTextRef.current = '';
+    const root = document.documentElement;
+    const glassWasOff = root.classList.contains('no-glass');
+    const saved = L.engine.camera.pov();
+    const all = [L.areas, L.lines, L.quakes, L.rings];
+    const only = (hidden: EngineLayer[], glassOff = glassWasOff) => {
+      for (const layer of all) L.engine.setLayerHidden(layer, hidden.includes(layer));
+      root.classList.toggle('no-glass', glassOff);
+    };
+    const phases: BenchPhase[] = [
+      { label: 'todo normal', apply: () => only([]) },
+      { label: 'sin desenfoque de paneles', apply: () => only([], true) },
+      { label: 'sin sismos', apply: () => only([L.quakes]) },
+      { label: 'sin países ni líneas', apply: () => only([L.areas, L.lines]) },
+      { label: 'solo el globo', apply: () => only(all) },
+    ];
+    const warmupMs = 1000;
+    const measureMs = 4000;
+    const target: BenchTarget = {
+      begin: () => L.engine.startBenchmark(),
+      window: () => L.engine.benchmarkWindow(),
+      read: () => L.engine.readBenchmark(),
+      end: () => {
+        L.engine.stopBenchmark(); // shows every layer again
+        root.classList.toggle('no-glass', glassWasOff);
+        L.engine.camera.setPov(saved);
+        L.engine.requestRender();
+      },
+      sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
+    };
+    try {
+      const results = await runBenchmark(target, phases, {
+        warmupMs,
+        measureMs,
+        onPhase: (i, n, label) => {
+          benchStatusRef.current = `Midiendo… fase ${i + 1}/${n} (${label}). No toques el globo.`;
+        },
+      });
+      benchTextRef.current = formatBenchmark(results, measureMs);
+    } catch (err) {
+      benchTextRef.current = `La medición falló: ${err instanceof Error ? err.message : String(err)}`;
+    } finally {
+      benchStatusRef.current = '';
+      benchingRef.current = false;
+      setBenching(false);
+    }
+  }, []);
 
   const copyDiagnostics = useCallback(async () => {
     const el = diagRef.current;
@@ -593,7 +656,12 @@ export default function GlobeCanvas({
         {announcement}
       </div>
       {diag && !unsupported && (
-        <button type="button" ref={diagRef} className="globe-diag" onClick={copyDiagnostics} aria-label="Diagnóstico del globo: tocar para copiar" />
+        <div className="globe-diag-wrap">
+          <button type="button" className="globe-diag-bench" onClick={runMeasurement} disabled={benching}>
+            {benching ? 'Midiendo…' : 'Medir (25 s)'}
+          </button>
+          <button type="button" ref={diagRef} className="globe-diag" onClick={copyDiagnostics} aria-label="Diagnóstico del globo: tocar para copiar" />
+        </div>
       )}
       {unsupported && (
         <div className="globe-unsupported" role="alert">
