@@ -28,6 +28,38 @@ export function diagnosticsRequested(search: string, storage: StorageLike | null
   }
 }
 
+export interface Experiments {
+  /** Multisampled drawing buffer (the default). `?msaa=0` turns it off to see what it costs on a device. */
+  msaa: boolean;
+  /** Blur behind the panels (the default). `?glass=0` turns it off for the same reason. */
+  glass: boolean;
+}
+
+const EXPERIMENT_KEYS = { msaa: 'seismo-msaa', glass: 'seismo-glass' } as const;
+
+/**
+ * Switches for measuring on a real device: `?msaa=0` and `?glass=0` turn off the two effects that cost
+ * the compositor and the GPU memory bandwidth rather than the globe's own drawing, `=1` puts them back.
+ * Like `?diag`, the choice stays for the tab, because the address is rewritten as the view changes.
+ */
+export function experimentFlags(search: string, storage: StorageLike | null): Experiments {
+  const params = new URLSearchParams(search);
+  const out: Experiments = { msaa: true, glass: true };
+  for (const name of ['msaa', 'glass'] as const) {
+    const asked = params.get(name);
+    const key = EXPERIMENT_KEYS[name];
+    try {
+      if (asked === '0') storage?.setItem(key, '0');
+      else if (asked === '1') storage?.removeItem(key);
+      const off = asked === '0' || (asked !== '1' && storage?.getItem(key) === '0');
+      out[name] = !off;
+    } catch {
+      out[name] = asked !== '0'; // storage blocked: honour the address, just do not remember it
+    }
+  }
+  return out;
+}
+
 export interface DiagExtras {
   /** Which country outlines are drawn: the coarse or the fine set. */
   detail: '110m' | '50m';

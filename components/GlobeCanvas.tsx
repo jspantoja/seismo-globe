@@ -18,7 +18,7 @@ import {
 import type { BoundaryPath, QuakeFeature } from '@/lib/types';
 import { magColor, sourceLabel } from '@/lib/format';
 import { DETAIL_PRELOAD_ALTITUDE, describeView, heightScaleFor, pointScaleFor, wantsDetail } from '@/lib/globeView';
-import { diagnosticsRequested, formatDiagnostics, type DiagExtras } from '@/lib/diagnostics';
+import { diagnosticsRequested, experimentFlags, formatDiagnostics, type DiagExtras } from '@/lib/diagnostics';
 
 /**
  * The globe of the app, drawn by the project's own WebGL2 engine (see /engine): the planet, the
@@ -203,9 +203,17 @@ export default function GlobeCanvas({
       diagOn = diagnosticsRequested(window.location.search, null); // storage blocked in this browser
     }
     setDiag(diagOn);
+    let experiments = experimentFlags('', null);
+    try {
+      experiments = experimentFlags(window.location.search, window.sessionStorage);
+    } catch {
+      experiments = experimentFlags(window.location.search, null);
+    }
+    document.documentElement.classList.toggle('no-glass', !experiments.glass);
     let engine: GlobeEngine;
     try {
       engine = new GlobeEngine(host, {
+        antialias: experiments.msaa,
         countDrawCalls: diagOn,
         gpuTiming: diagOn,
         textureUrls: EARTH_TEXTURES,

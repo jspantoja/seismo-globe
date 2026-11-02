@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { EngineDiagnostics } from '../engine';
-import { diagnosticsRequested, formatDiagnostics, isSoftwareRenderer } from '../lib/diagnostics';
+import { diagnosticsRequested, experimentFlags, formatDiagnostics, isSoftwareRenderer } from '../lib/diagnostics';
 
 const memory = () => {
   const m = new Map<string, string>();
@@ -35,6 +35,31 @@ const memory = () => {
   };
   assert.equal(diagnosticsRequested('?diag=1', blocked), true, 'blocked storage still honours the address');
   assert.equal(diagnosticsRequested('', blocked), false, 'and never throws');
+}
+
+// --- the experiment switches: off from the address, remembered by the tab, back on with =1
+{
+  const st = memory();
+  assert.deepEqual(experimentFlags('', st), { msaa: true, glass: true }, 'both on by default');
+  assert.deepEqual(experimentFlags('?msaa=0', st), { msaa: false, glass: true });
+  assert.deepEqual(experimentFlags('?pais=170', st), { msaa: false, glass: true }, 'remembered after the address was rewritten');
+  assert.deepEqual(experimentFlags('?glass=0', st), { msaa: false, glass: false });
+  assert.deepEqual(experimentFlags('?msaa=1', st), { msaa: true, glass: false }, '=1 puts one back');
+  assert.deepEqual(experimentFlags('?msaa=2&glass=1', st), { msaa: true, glass: true }, 'only 0 turns one off');
+  assert.deepEqual(experimentFlags('?msaa=0&glass=0', null), { msaa: false, glass: false }, 'works without storage');
+  const blocked = {
+    getItem: () => {
+      throw new Error('blocked');
+    },
+    setItem: () => {
+      throw new Error('blocked');
+    },
+    removeItem: () => {
+      throw new Error('blocked');
+    },
+  };
+  assert.deepEqual(experimentFlags('?msaa=0', blocked), { msaa: false, glass: true }, 'blocked storage still honours the address');
+  assert.deepEqual(experimentFlags('', blocked), { msaa: true, glass: true }, 'and never throws');
 }
 
 // --- software renderers are recognised

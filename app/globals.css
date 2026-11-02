@@ -82,6 +82,8 @@ html, body {
   box-shadow: var(--shadow);
   backdrop-filter: blur(10px);
 }
+/* ?glass=0 (to measure): no blur behind the panels, a little more opaque so they stay readable. */
+.no-glass .panel { backdrop-filter: none; background: rgba(15, 20, 32, 0.94); }
 
 .brand {
   padding: 10px 16px;

@@ -80,6 +80,8 @@ export interface EngineOptions {
   adaptiveResolution?: boolean;
   /** Floor of the adaptive scale (default 0.5). */
   minRenderScale?: number;
+  /** Multisampled drawing buffer (default true). Costs memory bandwidth, which an integrated GPU shares with the CPU. */
+  antialias?: boolean;
   /** Wrap the draw calls so the engine can count them (for measuring). */
   countDrawCalls?: boolean;
   /** Time the GPU per layer where the browser allows it (EXT_disjoint_timer_query_webgl2); for measuring. */
@@ -210,7 +212,7 @@ export class GlobeEngine {
     canvas.style.cssText = 'display:block;width:100%;height:100%;outline-offset:-2px;';
     const gl = canvas.getContext('webgl2', {
       alpha: true,
-      antialias: true,
+      antialias: options.antialias ?? true,
       depth: true,
       stencil: false,
       premultipliedAlpha: true,

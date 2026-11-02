@@ -112,6 +112,9 @@ fondo y, donde el navegador lo permite (Chrome y derivados de escritorio, `EXT_d
 milisegundos de **GPU por capa** (globo, áreas, líneas, sismos, anillos): así se ve si un equipo va lento por el
 globo, por los sismos o por algo que no es el dibujo (si el total de GPU es mucho menor que los ms por fotograma, el
 cuello de botella está fuera: compositor, desenfoque, suavizado). Tocar el panel copia el texto para pegarlo en un mensaje.
+Para saber cuánto cuestan esos dos efectos en un equipo concreto, **`?msaa=0`** quita el suavizado MSAA (el búfer
+deja de ser multimuestreado) y **`?glass=0`** quita el desenfoque de fondo de los paneles; `=1` los devuelve (también
+se recuerdan en la pestaña). El panel dice en qué estado están.
 
 ## Enlaces compartibles
 
