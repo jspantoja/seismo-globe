@@ -197,6 +197,7 @@ export class GlobeEngine {
   private readonly governor: ResolutionGovernor | null;
   private rendererName: string | null = null;
   private gpuTimer: GpuTimer | null = null;
+  private samples = 0; // MSAA samples of the drawing buffer, read once: getParameter waits for the GPU
   private readonly hiddenLayers = new Set<EngineLayer>();
   private spinDegPerSec = 0; // the globe turns by itself while a benchmark runs
   private spinClock = 0;
@@ -348,7 +349,7 @@ export class GlobeEngine {
       frameMs: this.governor ? this.governor.lastMedianMs : null,
       moving: this.moving,
       renderer: (this.rendererName ??= readRendererName(this.gl)),
-      samples: Number(this.gl.getParameter(this.gl.SAMPLES)) || 0,
+      samples: this.samples,
       ...this.gpuDiagnostics(),
     };
   }
@@ -356,6 +357,7 @@ export class GlobeEngine {
   private gpuDiagnostics(): Pick<EngineDiagnostics, 'gpuMs' | 'gpuWhile'> {
     const timer = this.gpuTimer;
     if (!timer || !timer.supported) return { gpuMs: null, gpuWhile: null };
+    if (!this.bench) timer.commit(performance.now()); // not during a benchmark window: it would stall the frames being measured
     const moving = timer.snapshot('moving');
     if (Object.keys(moving).length > 0) return { gpuMs: moving, gpuWhile: 'moving' };
     const rest = timer.snapshot('rest');
@@ -391,6 +393,7 @@ export class GlobeEngine {
   readBenchmark(): BenchmarkWindow {
     const b = this.bench;
     const timer = this.gpuTimer;
+    timer?.commit(performance.now(), 0); // the window is over: one wait for the GPU is fine now
     const gpu = timer && timer.supported ? timer.snapshot('moving') : null;
     return {
       gaps: b ? [...b.gaps] : [],
@@ -497,6 +500,7 @@ export class GlobeEngine {
     gl.bindVertexArray(null);
     this.uploadTexture();
     this.gpuTimer = this.options.gpuTiming ? new GpuTimer(gl) : null; // after a lost context the old queries are gone with it
+    this.samples = Number(gl.getParameter(gl.SAMPLES)) || 0;
   }
 
   private releaseGL(): void {
