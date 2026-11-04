@@ -343,7 +343,8 @@ export default function GlobeCanvas({
         detailAskedRef.current = true;
         onNeedDetailRef.current?.();
       }
-      onZoomChangeRef.current(pov);
+      // A measurement spins the globe over the world: it must not select every country it passes over.
+      if (!benchingRef.current) onZoomChangeRef.current(pov);
     };
     quakeLayer.setScale(pointScaleFor(engine.camera.altitude));
     quakeLayer.setHeightScale(heightScaleFor(engine.camera.altitude));
