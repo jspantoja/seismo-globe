@@ -29,8 +29,8 @@ export function diagnosticsRequested(search: string, storage: StorageLike | null
 }
 
 export interface Experiments {
-  /** Multisampled drawing buffer (the default). `?msaa=0` turns it off to see what it costs on a device. */
-  msaa: boolean;
+  /** Multisampled drawing buffer: null leaves it to the engine (by canvas size); `?msaa=0` and `?msaa=1` force it off or on. */
+  msaa: boolean | null;
   /** Blur behind the panels (the default). `?glass=0` turns it off for the same reason. */
   glass: boolean;
 }
@@ -38,26 +38,27 @@ export interface Experiments {
 const EXPERIMENT_KEYS = { msaa: 'seismo-msaa', glass: 'seismo-glass' } as const;
 
 /**
- * Switches for measuring on a real device: `?msaa=0` and `?glass=0` turn off the two effects that cost
- * the compositor and the GPU memory bandwidth rather than the globe's own drawing, `=1` puts them back.
- * Like `?diag`, the choice stays for the tab, because the address is rewritten as the view changes.
+ * Switches for measuring on a real device. `?msaa=0` / `?msaa=1` force the multisampled drawing buffer off
+ * or on (left alone, the engine decides by canvas size); `?glass=0` takes the blur from behind the panels
+ * (`?glass=1` puts it back). Like `?diag`, the choice stays for the tab, because the address is rewritten as
+ * the view changes.
  */
 export function experimentFlags(search: string, storage: StorageLike | null): Experiments {
   const params = new URLSearchParams(search);
-  const out: Experiments = { msaa: true, glass: true };
-  for (const name of ['msaa', 'glass'] as const) {
+  const read = (name: keyof typeof EXPERIMENT_KEYS): '0' | '1' | null => {
     const asked = params.get(name);
-    const key = EXPERIMENT_KEYS[name];
+    const given = asked === '0' || asked === '1' ? asked : null;
     try {
-      if (asked === '0') storage?.setItem(key, '0');
-      else if (asked === '1') storage?.removeItem(key);
-      const off = asked === '0' || (asked !== '1' && storage?.getItem(key) === '0');
-      out[name] = !off;
+      if (given) storage?.setItem(EXPERIMENT_KEYS[name], given);
+      const kept = storage?.getItem(EXPERIMENT_KEYS[name]);
+      return given ?? (kept === '0' || kept === '1' ? kept : null);
     } catch {
-      out[name] = asked !== '0'; // storage blocked: honour the address, just do not remember it
+      return given; // storage blocked: honour the address, just do not remember it
     }
-  }
-  return out;
+  };
+  const msaa = read('msaa');
+  const glass = read('glass');
+  return { msaa: msaa === null ? null : msaa === '1', glass: glass !== '0' };
 }
 
 export interface DiagExtras {

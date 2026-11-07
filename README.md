@@ -117,9 +117,12 @@ El botón **«Medir (25 s)»** del panel hace girar el globo solo, a resolución
 (media y p95) y GPU por capa. Deja un único informe bajo el panel, que se copia tocándolo, y al terminar devuelve la
 vista, las capas y el desenfoque a como estaban (`lib/benchmark.ts`, `GlobeEngine.startBenchmark`).
 
-Para saber cuánto cuestan esos dos efectos en un equipo concreto, **`?msaa=0`** quita el suavizado MSAA (el búfer
-deja de ser multimuestreado) y **`?glass=0`** quita el desenfoque de fondo de los paneles; `=1` los devuelve (también
-se recuerdan en la pestaña). El panel dice en qué estado están.
+El suavizado MSAA 4× es automático según el tamaño del lienzo: se usa mientras tenga menos de 4 millones de píxeles
+(`wantsMultisampling` en `engine/adaptive.ts`) y se apaga en pantallas muy grandes o de mucha densidad, donde en una
+GPU integrada (que comparte memoria con el procesador) cuesta más de lo que aporta: en una Radeon integrada con 7,5 Mpx
+pasó de 44–52 a 60 fps al apagarlo. Para forzarlo en un equipo concreto, **`?msaa=1`** lo enciende y **`?msaa=0`** lo
+apaga (el búfer deja de ser multimuestreado), y **`?glass=0`** quita el desenfoque de fondo de los paneles (`=1` lo
+devuelve); las tres se recuerdan en la pestaña. El panel dice en qué estado están.
 
 ## Enlaces compartibles
 

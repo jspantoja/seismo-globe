@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { ResolutionGovernor } from '../engine/adaptive';
+import { MSAA_MAX_PIXELS, ResolutionGovernor, wantsMultisampling } from '../engine/adaptive';
 
 /** Feeds `count` frames of the given gap, advancing a clock; returns the last scale change (or null) and the clock. */
 function feed(g: ResolutionGovernor, clock: { t: number }, gap: number, count: number): number[] {
@@ -134,3 +134,19 @@ function feed(g: ResolutionGovernor, clock: { t: number }, gap: number, count: n
 }
 
 console.log('engineAdaptive tests: ok');
+
+// --- multisampling follows the number of pixels the canvas will have
+{
+  assert.ok(wantsMultisampling(1920, 1080, 1), 'full HD (2 Mpx) keeps MSAA');
+  assert.ok(wantsMultisampling(2560, 1440, 1), '1440p at 1x (3.7 Mpx) keeps it');
+  assert.ok(wantsMultisampling(390, 844, 3), 'a phone: the ratio is capped at 2, so 1.3 Mpx');
+  assert.ok(!wantsMultisampling(2761, 1619, 1.3), 'the AMD iGPU machine that measured it (7.5 Mpx) goes without');
+  assert.ok(!wantsMultisampling(3840, 2160, 1), '4K at 1x goes without');
+  assert.ok(!wantsMultisampling(1440, 900, 2), 'a retina laptop (5.2 Mpx): the density hides the edges anyway');
+  assert.ok(wantsMultisampling(1000, 1000, 5, 1), 'the caller\'s cap applies (1x here: 1 Mpx)');
+  assert.ok(wantsMultisampling(1000, 1000, 0), 'an unknown device ratio counts as 1');
+  assert.ok(wantsMultisampling(1000, 1000, 0.5), 'and a ratio under 1 counts as 1 too');
+  assert.ok(!wantsMultisampling(Math.sqrt(MSAA_MAX_PIXELS), Math.sqrt(MSAA_MAX_PIXELS), 1), 'the limit itself is already over');
+}
+
+console.log('multisampling tests: ok');

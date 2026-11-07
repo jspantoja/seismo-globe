@@ -1,4 +1,4 @@
-import { ResolutionGovernor } from './adaptive';
+import { ResolutionGovernor, wantsMultisampling } from './adaptive';
 import { GlobeCamera, type Pov } from './camera';
 import { GlobeControls, type ControlEvents } from './controls';
 import { loadImageFirst, makeBuffer, makeProgram, parseColor, type Program } from './glcore';
@@ -80,7 +80,10 @@ export interface EngineOptions {
   adaptiveResolution?: boolean;
   /** Floor of the adaptive scale (default 0.5). */
   minRenderScale?: number;
-  /** Multisampled drawing buffer (default true). Costs memory bandwidth, which an integrated GPU shares with the CPU. */
+  /**
+   * Multisampled drawing buffer. Left out, it is decided from the canvas size (see wantsMultisampling): MSAA costs
+   * memory bandwidth, which an integrated GPU shares with the CPU, so very large canvases go without it.
+   */
   antialias?: boolean;
   /** Wrap the draw calls so the engine can count them (for measuring). */
   countDrawCalls?: boolean;
@@ -231,7 +234,7 @@ export class GlobeEngine {
     canvas.style.cssText = 'display:block;width:100%;height:100%;outline-offset:-2px;';
     const gl = canvas.getContext('webgl2', {
       alpha: true,
-      antialias: options.antialias ?? true,
+      antialias: options.antialias ?? this.autoMultisampling(container),
       depth: true,
       stencil: false,
       premultipliedAlpha: true,
@@ -274,6 +277,14 @@ export class GlobeEngine {
     }
     this.loadTexture();
     this.requestRender();
+  }
+
+  private autoMultisampling(container: HTMLElement): boolean {
+    const rect = container.getBoundingClientRect();
+    // The container may not be laid out yet: the window is the best guess then.
+    const w = rect.width || window.innerWidth;
+    const h = rect.height || window.innerHeight;
+    return wantsMultisampling(w, h, window.devicePixelRatio || 1, this.maxPixelRatio);
   }
 
   // ------------------------------------------------------------------ public API

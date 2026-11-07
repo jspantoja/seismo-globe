@@ -37,15 +37,15 @@ const memory = () => {
   assert.equal(diagnosticsRequested('', blocked), false, 'and never throws');
 }
 
-// --- the experiment switches: off from the address, remembered by the tab, back on with =1
+// --- the experiment switches: from the address, remembered by the tab, MSAA left to the engine by default
 {
   const st = memory();
-  assert.deepEqual(experimentFlags('', st), { msaa: true, glass: true }, 'both on by default');
+  assert.deepEqual(experimentFlags('', st), { msaa: null, glass: true }, 'by default MSAA is the engine\'s decision and the glass is on');
   assert.deepEqual(experimentFlags('?msaa=0', st), { msaa: false, glass: true });
   assert.deepEqual(experimentFlags('?pais=170', st), { msaa: false, glass: true }, 'remembered after the address was rewritten');
   assert.deepEqual(experimentFlags('?glass=0', st), { msaa: false, glass: false });
-  assert.deepEqual(experimentFlags('?msaa=1', st), { msaa: true, glass: false }, '=1 puts one back');
-  assert.deepEqual(experimentFlags('?msaa=2&glass=1', st), { msaa: true, glass: true }, 'only 0 turns one off');
+  assert.deepEqual(experimentFlags('?msaa=1', st), { msaa: true, glass: false }, '=1 forces MSAA on');
+  assert.deepEqual(experimentFlags('?msaa=2&glass=1', st), { msaa: true, glass: true }, 'only 0 and 1 mean anything; glass=1 puts the blur back');
   assert.deepEqual(experimentFlags('?msaa=0&glass=0', null), { msaa: false, glass: false }, 'works without storage');
   const blocked = {
     getItem: () => {
@@ -59,7 +59,7 @@ const memory = () => {
     },
   };
   assert.deepEqual(experimentFlags('?msaa=0', blocked), { msaa: false, glass: true }, 'blocked storage still honours the address');
-  assert.deepEqual(experimentFlags('', blocked), { msaa: true, glass: true }, 'and never throws');
+  assert.deepEqual(experimentFlags('', blocked), { msaa: null, glass: true }, 'and never throws');
 }
 
 // --- software renderers are recognised

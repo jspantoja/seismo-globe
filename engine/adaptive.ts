@@ -14,6 +14,21 @@
  * Pure logic, no browser: tests feed it frame gaps and read the scale it picks.
  */
 
+/**
+ * Whether the drawing buffer should be multisampled (MSAA), decided once when the context is made
+ * (the attribute cannot change afterwards). Multisampling multiplies the memory traffic of every pixel
+ * the globe's full-screen pass writes, and an integrated GPU shares that memory with the CPU: on an AMD
+ * Radeon iGPU a 3590x2105 canvas spun at 44-52 fps with MSAA 4x and held 60 fps without it, even with ten
+ * thousand quakes drawn. What MSAA buys is smooth prism edges, which matter less the denser the screen,
+ * so it is kept where it is cheap (small and medium canvases) and dropped on very large ones.
+ */
+export const MSAA_MAX_PIXELS = 4_000_000;
+
+export function wantsMultisampling(cssWidth: number, cssHeight: number, devicePixelRatio: number, maxPixelRatio = 2): boolean {
+  const ratio = Math.max(1, Math.min(maxPixelRatio, devicePixelRatio || 1));
+  return cssWidth * ratio * cssHeight * ratio < MSAA_MAX_PIXELS;
+}
+
 export interface GovernorOptions {
   /** Lowest scale it will pick (default 0.5). */
   min?: number;

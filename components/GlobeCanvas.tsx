@@ -219,7 +219,7 @@ export default function GlobeCanvas({
     let engine: GlobeEngine;
     try {
       engine = new GlobeEngine(host, {
-        antialias: experiments.msaa,
+        antialias: experiments.msaa ?? undefined, // undefined: decided from the canvas size
         countDrawCalls: diagOn,
         gpuTiming: diagOn,
         textureUrls: EARTH_TEXTURES,
